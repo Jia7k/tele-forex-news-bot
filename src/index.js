@@ -8,7 +8,8 @@ const moment = require('moment-timezone');
 
 const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
 const SCRAPE_DELAY_MINUTES = 2; 
-const WARNING_MINUTES = 10;     
+const WARNING_MINUTES = 10;
+const SUMMARY_HOUR = 6; // Hour to send daily summary (0-23)
 
 const groupEventsByTime = (events) => {
   const groups = {};
@@ -45,30 +46,54 @@ const loadAndSchedule = async () => {
 
   console.log(`Found ${todaysEvents.length} events for today.`);
 
-  // 1. Immediate Daily Digest
+  // ---------------------------------------------------------
+  // REQUIREMENT 1: Daily Summary at 06:00 AM
+  // ---------------------------------------------------------
+  const summaryTime = now.clone().hour(SUMMARY_HOUR).minute(0).second(0);
+  
   if (todaysEvents.length > 0) {
-    let digestMsg = `📅 <b>Today's Schedule (${now.format('DD MMM')}):</b>\n\n`;
-    
-    todaysEvents.sort((a, b) => {
-      const tA = parseTimeText(a.dateStr, a.timeText, a.year);
-      const tB = parseTimeText(b.dateStr, b.timeText, b.year);
-      return tA - tB;
-    });
+    // Only schedule if 6am is in the future (e.g. it's currently 00:01)
+    if (summaryTime.isAfter(now)) {
+      console.log(`📅 Daily Summary scheduled for ${summaryTime.format('HH:mm:ss')}`);
+      
+      schedule.scheduleJob(summaryTime.toDate(), async () => {
+        let digestMsg = `🌅 <b>Daily Summary (${now.format('DD MMM')}):</b>\n\n`;
+        
+        // Sort events by time
+        const sortedEvents = [...todaysEvents].sort((a, b) => {
+          const tA = parseTimeText(a.dateStr, a.timeText, a.year);
+          const tB = parseTimeText(b.dateStr, b.timeText, b.year);
+          return tA - tB;
+        });
 
-    todaysEvents.forEach(ev => {
-        digestMsg += `${ev.timeText} - ${formatEventMessage(ev)}\n`;
-    });
+        sortedEvents.forEach(ev => {
+            // Using a compact format for the summary to save space
+            // e.g. "09:30pm - 🔴 USD CPI m/m"
+            let icon = '⚪️';
+            if(ev.impact === 'High') icon = '🔴';
+            if(ev.impact === 'Medium') icon = '🟠';
+            if(ev.impact === 'Low') icon = '🟡';
+            
+            digestMsg += `${ev.timeText} ${icon} ${ev.currency} ${ev.eventName}\n`;
+        });
 
-    if (digestMsg.length > 4000) {
-      const mid = Math.floor(digestMsg.length / 2);
-      await sendTelegramMessage(digestMsg.substring(0, mid));
-      await sendTelegramMessage(digestMsg.substring(mid));
+        if (digestMsg.length > 4000) {
+          const mid = Math.floor(digestMsg.length / 2);
+          await sendTelegramMessage(digestMsg.substring(0, mid));
+          await sendTelegramMessage(digestMsg.substring(mid));
+        } else {
+          await sendTelegramMessage(digestMsg);
+        }
+        console.log('Sent daily summary.');
+      });
     } else {
-      await sendTelegramMessage(digestMsg);
+      console.log(`⚠️ Past 6:00 AM, skipping Daily Summary for today.`);
     }
-    console.log('Sent daily digest.');
   }
 
+  // ---------------------------------------------------------
+  // Schedule Warnings & Results
+  // ---------------------------------------------------------
   const eventsByTime = groupEventsByTime(todaysEvents);
 
   for (const [timeKey, groupEvents] of Object.entries(eventsByTime)) {
@@ -86,7 +111,7 @@ const loadAndSchedule = async () => {
         await sendTelegramMessage(msg);
         console.log(`Sent warning for ${eventTime.format('HH:mm')}`);
       });
-      console.log(`   -> Warning scheduled at ${warningTime.format('HH:mm:ss')}`);
+      console.log(`   -> Warning set for ${warningTime.format('HH:mm:ss')}`);
     }
 
     // 3. Schedule Result (2 mins after)
@@ -119,7 +144,7 @@ const loadAndSchedule = async () => {
           console.error('Error fetching results:', err);
         }
       });
-      console.log(`   -> Result scrape scheduled at ${scrapeTime.format('HH:mm:ss')}`);
+      console.log(`   -> Result scrape set for ${scrapeTime.format('HH:mm:ss')}`);
     }
   }
 
@@ -130,6 +155,7 @@ const loadAndSchedule = async () => {
   console.log(`Bot starting up in ${TARGET_TZ}...`);
   await loadAndSchedule();
 
+  // Reload at midnight 00:01 so we can catch the 06:00 summary
   const rule = new schedule.RecurrenceRule();
   rule.tz = TARGET_TZ;
   rule.hour = 0;
