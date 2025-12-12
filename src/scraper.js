@@ -1,17 +1,21 @@
+// src/scraper.js
 const cheerio = require('cheerio');
 require('dotenv').config();
 
 const BASE = process.env.BASE_URL || 'https://www.forexfactory.com';
 
-const fetchCalendar = async () => {
-  console.log('Fetching calendar via HTTP...');
+// NOW ACCEPTS AN OPTIONAL DATE STRING
+const fetchCalendar = async (dateQuery = '') => {
+  console.log(`Fetching calendar via HTTP... ${dateQuery ? '(Target: ' + dateQuery + ')' : '(Default Week)'}`);
   
-  // FIX: Load got-scraping dynamically because it is an ESM module
   const { gotScraping } = await import('got-scraping');
+
+  // If a specific date is requested, append it. e.g. /calendar?day=dec15.2025
+  const url = dateQuery ? `${BASE}/calendar?day=${dateQuery}` : `${BASE}/calendar`;
 
   try {
     const response = await gotScraping({
-      url: `${BASE}/calendar`,
+      url,
       headerGeneratorOptions: {
         browsers: [{ name: 'chrome', minVersion: 110 }],
         devices: ['desktop'],
@@ -23,9 +27,7 @@ const fetchCalendar = async () => {
         methods: ['GET'],
         statusCodes: [408, 413, 429, 500, 502, 503, 504, 521, 522, 524],
       },
-      timeout: {
-        request: 30000, 
-      },
+      timeout: { request: 30000 },
     });
 
     const html = response.body;
@@ -95,9 +97,6 @@ const fetchCalendar = async () => {
 
   } catch (error) {
     console.error('Error in scraper:', error.message);
-    if (error.response && error.response.statusCode === 403) {
-      console.error('⚠️ Cloudflare blocked the request. The site is in "Under Attack" mode.');
-    }
     return [];
   }
 };
