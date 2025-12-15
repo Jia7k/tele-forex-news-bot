@@ -19,6 +19,7 @@
     "lowdb": "^1.0.0",
     "moment-timezone": "^0.6.0",
     "node-schedule": "^2.1.1",
+    "node-telegram-bot-api": "^0.67.0",
     "tz-offset": "^0.0.2"
   }
 }

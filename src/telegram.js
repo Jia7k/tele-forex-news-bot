@@ -1,26 +1,25 @@
 require('dotenv').config();
-const axios = require('axios');
+const TelegramBot = require('node-telegram-bot-api');
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TELEGRAM_BASE = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+// Make sure your .env has TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+const token = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN;
+const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
 
+// 1. Initialize the Bot with Polling enabled
+const bot = new TelegramBot(token, { polling: true });
+
+// 2. Helper function to send messages (used by your scraper logic)
 const sendTelegramMessage = async (text) => {
-  if (!TELEGRAM_TOKEN || !CHAT_ID) {
-    console.error('TELEGRAM_TOKEN or CHAT_ID missing in .env');
+  if (!chatId) {
+    console.error('CHAT_ID missing in .env');
     return;
   }
   try {
-    await axios.post(`${TELEGRAM_BASE}/sendMessage`, {
-      chat_id: CHAT_ID,
-      text,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    });
-    console.log('sent message');
-  } catch (err) {
-    console.error('telegram send error', err.message);
+    await bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+  } catch (error) {
+    console.error('Telegram Send Error:', error.message);
   }
 };
 
-module.exports = { sendTelegramMessage };
+// 3. Export both the function AND the bot instance
+module.exports = { sendTelegramMessage, bot };
