@@ -1,3 +1,16 @@
+
+// --- ADD THIS TO THE VERY TOP OF src/index.js ---
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => res.send('Bot is running!'));
+
+app.listen(port, () => {
+  console.log(`Web server listening on port ${port}`);
+});
+// ------------------------------------------------
+
 require('dotenv').config();
 const { fetchCalendar } = require('./scraper');
 const { parseTimeText, formatEventMessage } = require('./utils');
