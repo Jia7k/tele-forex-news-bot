@@ -225,3 +225,24 @@ const loadAndSchedule = async () => {
   });
 
 })();
+
+// --- SHUTDOWN HANDLER (Fixes 409 Conflict) ---
+const shutdown = () => {
+  console.log('🛑 Received shutdown signal. Closing bot...');
+  
+  // 1. Stop listening to Telegram (polling)
+  bot.stopPolling();
+  
+  // 2. Kill the schedule jobs
+  schedule.gracefulShutdown();
+  
+  // 3. Close the Express server (if you want to be thorough, though optional here)
+  
+  console.log('✅ Bot shut down gracefully.');
+  process.exit(0);
+};
+
+// Listen for the "SIGTERM" signal from Render
+process.on('SIGTERM', shutdown);
+// Listen for "SIGINT" (Ctrl+C on local)
+process.on('SIGINT', shutdown);
