@@ -71,6 +71,7 @@ const groupEventsByTime = (events) => {
 };
 
 // --- CORE FUNCTION: Run Check Logic ---
+// --- CORE FUNCTION: Run Check Logic ---
 const performSystemCheck = async () => {
   const now = moment.tz(TARGET_TZ);
   
@@ -79,13 +80,13 @@ const performSystemCheck = async () => {
   const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
   let targetDate = now.clone();
   let dateQuery = ''; 
-  let displayTitle = `Daily Summary (${now.format('DD MMM')})`;
+  let displayTitle = now.format('DD MMM');
 
   if (isWeekend) {
     const daysToAdd = dayOfWeek === 6 ? 2 : 1;
     targetDate = now.clone().add(daysToAdd, 'days');
     dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
-    displayTitle = `Monday's Schedule (Advance View)`;
+    displayTitle = `Monday ${targetDate.format('DD MMM')} (Advance View)`;
   }
 
   console.log(`[Check] Fetching data for ${targetDate.format('YYYY-MM-DD')}...`);
@@ -93,7 +94,7 @@ const performSystemCheck = async () => {
   // 2. Fetch
   const events = await fetchCalendar(dateQuery);
   
-  // 3. Filter
+  // 3. Filter for Target Date
   const startOfTarget = targetDate.clone().startOf('day');
   const endOfTarget = targetDate.clone().endOf('day');
   const targetEvents = events.filter(ev => {
@@ -102,9 +103,37 @@ const performSystemCheck = async () => {
     return moment(dateObj).isBetween(startOfTarget, endOfTarget);
   });
 
-  // 4. Send Messages
+  // 4. Send Status Message
   await sendTelegramMessage(`🛠 <b>System Check</b>\nStatus: 🟢 Online\nTime: ${now.format('HH:mm:ss')}\nMode: ${isWeekend ? 'Weekend' : 'Weekday'}`);
-  await sendDailyDigest(targetEvents, displayTitle);
+
+  // 5. Send Detailed News Report
+  if (targetEvents.length === 0) {
+    await sendTelegramMessage(`No events found for ${displayTitle}.`);
+  } else {
+    // Sort events by time
+    const sortedEvents = [...targetEvents].sort((a, b) => {
+      const tA = parseTimeText(a.dateStr, a.timeText, a.year);
+      const tB = parseTimeText(b.dateStr, b.timeText, b.year);
+      return tA - tB;
+    });
+
+    let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n`;
+
+    // Loop through and format using the "Vertical Stack" style
+    for (const ev of sortedEvents) {
+      detailedMsg += formatEventMessage(ev) + '\n';
+    }
+
+    // Split message if it exceeds Telegram's 4096 char limit
+    if (detailedMsg.length > 4000) {
+      const mid = Math.floor(detailedMsg.length / 2);
+      await sendTelegramMessage(detailedMsg.substring(0, mid));
+      await sendTelegramMessage(detailedMsg.substring(mid));
+    } else {
+      await sendTelegramMessage(detailedMsg);
+    }
+  }
+  
   console.log('[Check] Complete.');
 };
 
