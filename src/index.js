@@ -1,17 +1,12 @@
-
-// --- ADD THIS TO THE VERY TOP OF src/index.js ---
+require('dotenv').config();
+// --- DUMMY SERVER FOR RENDER ---
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
-
 app.get('/', (req, res) => res.send('Bot is running!'));
+app.listen(port, () => console.log(`Web server listening on port ${port}`));
+// -------------------------------
 
-app.listen(port, () => {
-  console.log(`Web server listening on port ${port}`);
-});
-// ------------------------------------------------
-
-require('dotenv').config();
 const { fetchCalendar } = require('./scraper');
 const { parseTimeText, formatEventMessage } = require('./utils');
 const { sendTelegramMessage, bot } = require('./telegram'); 
@@ -25,37 +20,79 @@ const SCRAPE_DELAY_MINUTES = 2;
 const WARNING_MINUTES = 10;
 const SUMMARY_HOUR = 6; 
 
-// --- Helper: Sort and Send the Digest ---
-const sendDailyDigest = async (events, dateTitle) => {
-  if (!events || events.length === 0) {
-    await sendTelegramMessage(`📅 <b>${dateTitle}:</b>\nNo significant events found.`);
-    return;
-  }
+// --- 1. INDEPENDENT DAILY SUMMARY JOB (Runs at 6:00 AM) ---
+const scheduleDailySummary = () => {
+  const rule = new schedule.RecurrenceRule();
+  rule.tz = TARGET_TZ;
+  rule.hour = SUMMARY_HOUR; // 6
+  rule.minute = 0;
+  rule.second = 0;
 
-  let digestMsg = `🌅 <b>${dateTitle}:</b>\n\n`;
-  
-  const sortedEvents = [...events].sort((a, b) => {
-    const tA = parseTimeText(a.dateStr, a.timeText, a.year);
-    const tB = parseTimeText(b.dateStr, b.timeText, b.year);
-    return tA - tB;
+  console.log(`📅 Daily Summary job initialized for ${SUMMARY_HOUR}:00 ${TARGET_TZ}`);
+
+  schedule.scheduleJob(rule, async () => {
+    console.log('⏰ 6:00 AM Trigger: Fetching Daily Summary...');
+    const now = moment.tz(TARGET_TZ);
+
+    // Weekend Logic (Same as before)
+    const dayOfWeek = now.day();
+    const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+    let targetDate = now.clone();
+    let displayTitle = now.format('DD MMM');
+
+    if (isWeekend) {
+      const daysToAdd = dayOfWeek === 6 ? 2 : 1;
+      targetDate = now.clone().add(daysToAdd, 'days');
+      displayTitle = `Monday ${targetDate.format('DD MMM')} (Advance View)`;
+    }
+
+    // Explicit Date Query
+    const dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
+    const events = await fetchCalendar(dateQuery);
+
+    // Filter for Target Date
+    const startOfTarget = targetDate.clone().startOf('day');
+    const endOfTarget = targetDate.clone().endOf('day');
+    const targetEvents = events.filter(ev => {
+      const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
+      if (!dateObj) return false;
+      return moment(dateObj).isBetween(startOfTarget, endOfTarget);
+    });
+
+    // Send Message
+    if (targetEvents.length === 0) {
+      await sendTelegramMessage(`📅 <b>${displayTitle}:</b>\nNo significant events found.`);
+    } else {
+      const sortedEvents = [...targetEvents].sort((a, b) => {
+        const tA = parseTimeText(a.dateStr, a.timeText, a.year);
+        const tB = parseTimeText(b.dateStr, b.timeText, b.year);
+        return tA - tB;
+      });
+
+      let digestMsg = `🌅 <b>${displayTitle}:</b>\n\n`;
+
+      sortedEvents.forEach(ev => {
+          let icon = '⚪️';
+          if(ev.impact === 'High') icon = '🔴';
+          if(ev.impact === 'Medium') icon = '🟠';
+          if(ev.impact === 'Low') icon = '🟡';
+          
+          // Vertical Stack Format for Summary
+          digestMsg += `<b>${ev.timeText} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
+          digestMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
+          digestMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
+      });
+
+      if (digestMsg.length > 4000) {
+        const mid = Math.floor(digestMsg.length / 2);
+        await sendTelegramMessage(digestMsg.substring(0, mid));
+        await sendTelegramMessage(digestMsg.substring(mid));
+      } else {
+        await sendTelegramMessage(digestMsg);
+      }
+      console.log('✅ Daily Summary Sent.');
+    }
   });
-
-  sortedEvents.forEach(ev => {
-      let icon = '⚪️';
-      if(ev.impact === 'High') icon = '🔴';
-      if(ev.impact === 'Medium') icon = '🟠';
-      if(ev.impact === 'Low') icon = '🟡';
-      
-      digestMsg += `${ev.timeText} ${icon} ${ev.currency} ${ev.eventName}\n`;
-  });
-
-  if (digestMsg.length > 4000) {
-    const mid = Math.floor(digestMsg.length / 2);
-    await sendTelegramMessage(digestMsg.substring(0, mid));
-    await sendTelegramMessage(digestMsg.substring(mid));
-  } else {
-    await sendTelegramMessage(digestMsg);
-  }
 };
 
 const groupEventsByTime = (events) => {
@@ -71,30 +108,25 @@ const groupEventsByTime = (events) => {
 };
 
 // --- CORE FUNCTION: Run Check Logic ---
-// --- CORE FUNCTION: Run Check Logic ---
 const performSystemCheck = async () => {
   const now = moment.tz(TARGET_TZ);
   
-  // 1. Weekend Logic
   const dayOfWeek = now.day();
   const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
   let targetDate = now.clone();
-  let dateQuery = ''; 
   let displayTitle = now.format('DD MMM');
 
   if (isWeekend) {
     const daysToAdd = dayOfWeek === 6 ? 2 : 1;
     targetDate = now.clone().add(daysToAdd, 'days');
-    dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
     displayTitle = `Monday ${targetDate.format('DD MMM')} (Advance View)`;
   }
 
-  console.log(`[Check] Fetching data for ${targetDate.format('YYYY-MM-DD')}...`);
+  const dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
+  console.log(`[Check] Fetching data for ${targetDate.format('YYYY-MM-DD')} (Query: ${dateQuery})...`);
   
-  // 2. Fetch
   const events = await fetchCalendar(dateQuery);
   
-  // 3. Filter for Target Date
   const startOfTarget = targetDate.clone().startOf('day');
   const endOfTarget = targetDate.clone().endOf('day');
   const targetEvents = events.filter(ev => {
@@ -103,28 +135,31 @@ const performSystemCheck = async () => {
     return moment(dateObj).isBetween(startOfTarget, endOfTarget);
   });
 
-  // 4. Send Status Message
   await sendTelegramMessage(`🛠 <b>System Check</b>\nStatus: 🟢 Online\nTime: ${now.format('HH:mm:ss')}\nMode: ${isWeekend ? 'Weekend' : 'Weekday'}`);
 
-  // 5. Send Detailed News Report
   if (targetEvents.length === 0) {
     await sendTelegramMessage(`No events found for ${displayTitle}.`);
   } else {
-    // Sort events by time
     const sortedEvents = [...targetEvents].sort((a, b) => {
       const tA = parseTimeText(a.dateStr, a.timeText, a.year);
       const tB = parseTimeText(b.dateStr, b.timeText, b.year);
       return tA - tB;
     });
 
-    let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n`;
+    let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n\n`;
 
-    // Loop through and format using the "Vertical Stack" style
     for (const ev of sortedEvents) {
-      detailedMsg += formatEventMessage(ev) + '\n';
+      let icon = '⚪️';
+      if (ev.impact === 'High') icon = '🔴';
+      if (ev.impact === 'Medium') icon = '🟠';
+      if (ev.impact === 'Low') icon = '🟡';
+
+      detailedMsg += `<b>${ev.timeText} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
+      detailedMsg += `├ Act: ${ev.actual || '--'}\n`;
+      detailedMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
+      detailedMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
     }
 
-    // Split message if it exceeds Telegram's 4096 char limit
     if (detailedMsg.length > 4000) {
       const mid = Math.floor(detailedMsg.length / 2);
       await sendTelegramMessage(detailedMsg.substring(0, mid));
@@ -133,35 +168,27 @@ const performSystemCheck = async () => {
       await sendTelegramMessage(detailedMsg);
     }
   }
-  
   console.log('[Check] Complete.');
 };
 
-// --- Main Schedule Logic ---
+// --- Main Schedule Logic (FOR ALERTS ONLY) ---
 const loadAndSchedule = async () => {
-  console.log('--- Starting Load Cycle ---');
+  console.log('--- Starting Load Cycle (Alerts Only) ---');
   
   const now = moment.tz(TARGET_TZ);
-  const dayOfWeek = now.day();
-  const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-
-  let targetDate = now.clone();
-  let dateQuery = ''; 
-  let displayTitle = `Daily Summary (${now.format('DD MMM')})`;
-
-  if (isWeekend) {
-    const daysToAdd = dayOfWeek === 6 ? 2 : 1;
-    targetDate = now.clone().add(daysToAdd, 'days');
-    dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
-    displayTitle = `Monday's Schedule (Advance View - ${targetDate.format('DD MMM')})`;
-    console.log(`Weekend detected. Switching target to Monday.`);
-  }
+  
+  // Note: For alerts, we only care about TODAY's actual events.
+  // We do NOT use the Weekend Logic here, because there are no alerts on weekends.
+  const dateQuery = now.format('MMMD.YYYY').toLowerCase();
 
   const events = await fetchCalendar(dateQuery);
-  if (!events || events.length === 0) return;
+  if (!events || events.length === 0) {
+      console.log('No events found to schedule alerts for.');
+      return;
+  }
 
-  const startOfTarget = targetDate.clone().startOf('day');
-  const endOfTarget = targetDate.clone().endOf('day');
+  const startOfTarget = now.clone().startOf('day');
+  const endOfTarget = now.clone().endOf('day');
 
   const targetEvents = events.filter(ev => {
     const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
@@ -170,18 +197,11 @@ const loadAndSchedule = async () => {
     return eventTime.isBetween(startOfTarget, endOfTarget);
   });
 
-  console.log(`Found ${targetEvents.length} events.`);
+  console.log(`Found ${targetEvents.length} events for alerts.`);
 
-  // 1. Schedule Summary (06:00 AM)
-  const summaryTime = now.clone().hour(SUMMARY_HOUR).minute(0).second(0);
-  if (targetEvents.length > 0 && summaryTime.isAfter(now)) {
-      console.log(`📅 Summary scheduled for ${summaryTime.format('HH:mm:ss')}`);
-      schedule.scheduleJob(summaryTime.toDate(), async () => {
-        await sendDailyDigest(targetEvents, displayTitle);
-      });
-  }
+  // REMOVED: "Schedule Summary" block (It is now handled by scheduleDailySummary)
 
-  // 2. Schedule Alerts
+  // 1. Schedule Alerts (Warnings & Results)
   const eventsByTime = groupEventsByTime(targetEvents);
   for (const [timeKey, groupEvents] of Object.entries(eventsByTime)) {
     const eventTime = moment(timeKey);
@@ -219,12 +239,22 @@ const loadAndSchedule = async () => {
 (async () => {
   console.log(`Bot starting up in ${TARGET_TZ}...`);
 
-  // --- NEW: STARTUP MESSAGE ---
-  await sendTelegramMessage("🤖 <b>Bot is now online.</b> Waiting for news...");
-  // -----------------------------
+  const shutdown = () => {
+    console.log('🛑 Received shutdown signal. Closing bot...');
+    bot.stopPolling();
+    schedule.gracefulShutdown();
+    process.exit(0);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 
+  // 1. Initialize the 6 AM Job immediately
+  scheduleDailySummary();
+
+  // 2. Load today's alerts
   await loadAndSchedule();
 
+  // 3. Set up Midnight Reload (to refresh alerts for the new day)
   const rule = new schedule.RecurrenceRule();
   rule.tz = TARGET_TZ;
   rule.hour = 0;
@@ -254,24 +284,3 @@ const loadAndSchedule = async () => {
   });
 
 })();
-
-// --- SHUTDOWN HANDLER (Fixes 409 Conflict) ---
-const shutdown = () => {
-  console.log('🛑 Received shutdown signal. Closing bot...');
-  
-  // 1. Stop listening to Telegram (polling)
-  bot.stopPolling();
-  
-  // 2. Kill the schedule jobs
-  schedule.gracefulShutdown();
-  
-  // 3. Close the Express server (if you want to be thorough, though optional here)
-  
-  console.log('✅ Bot shut down gracefully.');
-  process.exit(0);
-};
-
-// Listen for the "SIGTERM" signal from Render
-process.on('SIGTERM', shutdown);
-// Listen for "SIGINT" (Ctrl+C on local)
-process.on('SIGINT', shutdown);
