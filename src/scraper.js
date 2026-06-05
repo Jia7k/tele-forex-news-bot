@@ -14,8 +14,8 @@ const fetchCalendar = async (dateQuery = '') => {
     const response = await gotScraping({
       url,
       headers: {
-        // Force the Forex Factory server to return SGT times
-        'cookie': `timezone=${TARGET_TZ};` 
+        // ENCODED COOKIE: Forces FF to serve SGT, preventing 12-hour shifts
+        'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};` 
       },
       headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'], locales: ['en-US'], operatingSystems: ['windows'] },
       retry: { limit: 2, methods: ['GET'] },
@@ -61,7 +61,7 @@ const fetchCalendar = async (dateQuery = '') => {
       if (impactClass.includes('red')) impact = 'High';
       else if (impactClass.includes('orange')) impact = 'Medium';
       else if (impactClass.includes('yellow')) impact = 'Low';
-      else if (impactClass.includes('gray') || impactClass.includes('holiday')) impact = 'Non-Economic'; // Bank Holidays
+      else if (impactClass.includes('gray') || impactClass.includes('holiday')) impact = 'Non-Economic';
 
       events.push({
         id, dateStr: currentDateStr, year: currentYear, timeText, currency, impact, eventName,

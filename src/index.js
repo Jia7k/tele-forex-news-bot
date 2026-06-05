@@ -25,12 +25,8 @@ const scheduleDailySummary = () => {
   rule.minute = 0;
   rule.second = 0;
 
-  console.log(`📅 Daily Summary job initialized for ${SUMMARY_HOUR}:00 ${TARGET_TZ}`);
-
   schedule.scheduleJob(rule, async () => {
-    console.log('⏰ 6:00 AM Trigger: Fetching Daily Summary...');
     const now = moment.tz(TARGET_TZ);
-
     const dayOfWeek = now.day();
     const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
     let targetDate = now.clone();
@@ -69,14 +65,14 @@ const scheduleDailySummary = () => {
           if(ev.impact === 'High') icon = '🔴';
           if(ev.impact === 'Medium') icon = '🟠';
           if(ev.impact === 'Low') icon = '🟡';
+          if(ev.impact === 'Non-Economic') icon = '⚪️';
           
           const isAllDay = ev.timeText.toLowerCase().includes('day');
           const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-          // Format as 24-hour time (HH:mm)
-          const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('HH:mm');
+          const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
           
           if (localTimeStr !== lastPrintedTime) {
-            digestMsg += `<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+            digestMsg += `${localTimeStr} ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
             lastPrintedTime = localTimeStr;
           } else {
             digestMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
@@ -93,7 +89,6 @@ const scheduleDailySummary = () => {
       } else {
         await sendTelegramMessage(digestMsg);
       }
-      console.log('✅ Daily Summary Sent.');
     }
   });
 };
@@ -125,7 +120,6 @@ const performSystemCheck = async (filterType = 'filter_all') => {
   }
 
   const dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
-  console.log(`[Check] Fetching data for ${targetDate.format('YYYY-MM-DD')}`);
   
   const events = await fetchCalendar(dateQuery);
   
@@ -169,11 +163,10 @@ const performSystemCheck = async (filterType = 'filter_all') => {
 
       const isAllDay = ev.timeText.toLowerCase().includes('day');
       const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-      // Format as 24-hour time (HH:mm)
-      const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('HH:mm');
+      const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
 
       if (localTimeStr !== lastPrintedTime) {
-        detailedMsg += `<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+        detailedMsg += `${localTimeStr} ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
         lastPrintedTime = localTimeStr;
       } else {
         detailedMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
@@ -194,9 +187,7 @@ const performSystemCheck = async (filterType = 'filter_all') => {
   }
 };
 
-const loadAndSchedule = async () => {
-  console.log('--- Starting Load Cycle (Alerts Only) ---');
-  
+const loadAndSchedule = async () => {  
   const now = moment.tz(TARGET_TZ);
   const dateQuery = now.format('MMMD.YYYY').toLowerCase();
 
@@ -251,8 +242,6 @@ const loadAndSchedule = async () => {
 };
 
 (async () => {
-  console.log(`Bot starting up in ${TARGET_TZ}...`);
-
   const shutdown = () => {
     bot.stopPolling();
     schedule.gracefulShutdown();
