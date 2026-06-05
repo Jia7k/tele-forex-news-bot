@@ -1,19 +1,22 @@
 require('dotenv').config();
-// --- DUMMY SERVER FOR RENDER ---
+
+// --- IMPORTS ---
 const express = require('express');
+const schedule = require('node-schedule');
+const moment = require('moment-timezone');
+const readline = require('readline');
+
+const { fetchCalendar } = require('./scraper');
+const { parseTimeText, formatEventMessage, generateChartUrl } = require('./utils');
+const { sendTelegramMessage, sendTelegramPhoto, bot } = require('./telegram'); 
+const store = require('./store');
+
+// --- DUMMY SERVER FOR RENDER ---
 const app = express();
 const port = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(port, () => console.log(`Web server listening on port ${port}`));
 // -------------------------------
-
-const { fetchCalendar } = require('./scraper');
-const { parseTimeText, formatEventMessage } = require('./utils');
-const { sendTelegramMessage, bot } = require('./telegram'); 
-const store = require('./store');
-const schedule = require('node-schedule');
-const moment = require('moment-timezone');
-const readline = require('readline');
 
 const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
 const SCRAPE_DELAY_MINUTES = 2; 
@@ -34,7 +37,7 @@ const scheduleDailySummary = () => {
     console.log('⏰ 6:00 AM Trigger: Fetching Daily Summary...');
     const now = moment.tz(TARGET_TZ);
 
-    // Weekend Logic (Same as before)
+    // Weekend Logic
     const dayOfWeek = now.day();
     const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
     let targetDate = now.clone();
@@ -108,7 +111,7 @@ const groupEventsByTime = (events) => {
 };
 
 // --- CORE FUNCTION: Run Check Logic ---
-const performSystemCheck = async () => {
+const performSystemCheck = async (filterType = 'filter_all') => {
   const now = moment.tz(TARGET_TZ);
   
   const dayOfWeek = now.day();
@@ -129,16 +132,30 @@ const performSystemCheck = async () => {
   
   const startOfTarget = targetDate.clone().startOf('day');
   const endOfTarget = targetDate.clone().endOf('day');
+  
   const targetEvents = events.filter(ev => {
     const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
     if (!dateObj) return false;
-    return moment(dateObj).isBetween(startOfTarget, endOfTarget);
+    
+    // Time check
+    const isToday = moment(dateObj).isBetween(startOfTarget, endOfTarget);
+    if (!isToday) return false;
+
+    // Filter check based on the button pressed
+    if (filterType === 'filter_high') return ev.impact === 'High';
+    if (filterType === 'filter_medium') return ev.impact === 'High' || ev.impact === 'Medium';
+    
+    return true; // filter_all
   });
 
-  await sendTelegramMessage(`🛠 <b>System Check</b>\nStatus: 🟢 Online\nTime: ${now.format('HH:mm:ss')}\nMode: ${isWeekend ? 'Weekend' : 'Weekday'}`);
+  let filterLabel = 'All Events';
+  if (filterType === 'filter_high') filterLabel = 'High Impact Only';
+  if (filterType === 'filter_medium') filterLabel = 'High & Medium Impact';
+
+  await sendTelegramMessage(`🛠 <b>System Check (${filterLabel})</b>\nStatus: 🟢 Online\nTime: ${now.format('HH:mm:ss')}\nMode: ${isWeekend ? 'Weekend' : 'Weekday'}`);
 
   if (targetEvents.length === 0) {
-    await sendTelegramMessage(`No events found for ${displayTitle}.`);
+    await sendTelegramMessage(`No ${filterLabel.toLowerCase()} found for ${displayTitle}.`);
   } else {
     const sortedEvents = [...targetEvents].sort((a, b) => {
       const tA = parseTimeText(a.dateStr, a.timeText, a.year);
@@ -177,8 +194,6 @@ const loadAndSchedule = async () => {
   
   const now = moment.tz(TARGET_TZ);
   
-  // Note: For alerts, we only care about TODAY's actual events.
-  // We do NOT use the Weekend Logic here, because there are no alerts on weekends.
   const dateQuery = now.format('MMMD.YYYY').toLowerCase();
 
   const events = await fetchCalendar(dateQuery);
@@ -199,8 +214,6 @@ const loadAndSchedule = async () => {
 
   console.log(`Found ${targetEvents.length} events for alerts.`);
 
-  // REMOVED: "Schedule Summary" block (It is now handled by scheduleDailySummary)
-
   // 1. Schedule Alerts (Warnings & Results)
   const eventsByTime = groupEventsByTime(targetEvents);
   for (const [timeKey, groupEvents] of Object.entries(eventsByTime)) {
@@ -220,15 +233,29 @@ const loadAndSchedule = async () => {
     if (scrapeTime.isAfter(now)) {
       const jobName = `result-${timeKey}`;
       if (schedule.scheduledJobs[jobName]) continue;
+      
+      // THIS IS THE UPDATED BLOCK WITH CHART LOGIC
       schedule.scheduleJob(jobName, scrapeTime.toDate(), async () => {
         try {
           const freshEvents = await fetchCalendar(dateQuery);
-          let resultMsg = `✅ <b>News Released:</b>\n`;
+          
           for (const oldEv of groupEvents) {
             const freshEv = freshEvents.find(f => (f.id && f.id === oldEv.id) || (f.eventName === oldEv.eventName));
-            resultMsg += formatEventMessage(freshEv || oldEv) + '\n';
+            const targetEv = freshEv || oldEv;
+            
+            let resultMsg = `✅ <b>News Released:</b>\n`;
+            resultMsg += formatEventMessage(targetEv);
+
+            const chartUrl = generateChartUrl(targetEv);
+
+            if (chartUrl) {
+              // Send the message as an image caption if a chart was generated
+              await sendTelegramPhoto(chartUrl, resultMsg);
+            } else {
+              // Fallback to text if there's no data to chart
+              await sendTelegramMessage(resultMsg);
+            }
           }
-          await sendTelegramMessage(resultMsg);
         } catch (err) { console.error(err); }
       });
       console.log(`   -> Result set for ${scrapeTime.format('DD MMM HH:mm')}`);
@@ -266,21 +293,47 @@ const loadAndSchedule = async () => {
 
   console.log("👂 Listening for 'check' on Telegram...");
   
+  // 1. Listen for the 'check' command and send the button menu
   bot.on('message', async (msg) => {
     const text = msg.text ? msg.text.toLowerCase().trim() : '';
     if (text === 'check') {
       console.log(`Received 'check' command from ${msg.chat.username}`);
-      await bot.sendMessage(msg.chat.id, "🔍 Checking status... please wait.");
-      await performSystemCheck();
+      
+      const options = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🔴 High Impact', callback_data: 'filter_high' },
+              { text: '🟠 Medium & Up', callback_data: 'filter_medium' }
+            ],
+            [
+              { text: '📋 All Events', callback_data: 'filter_all' }
+            ]
+          ]
+        },
+        parse_mode: 'HTML'
+      };
+
+      await bot.sendMessage(msg.chat.id, "🔍 <b>Select the impact level you want to check:</b>", options);
     }
   });
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  rl.on('line', async (input) => {
-    if (input.trim().toLowerCase() === 'check') {
-      console.log('Manual terminal check...');
-      await performSystemCheck();
-    }
-  });
+  // 2. Listen for the button clicks
+  bot.on('callback_query', async (query) => {
+    const data = query.data; // This will be 'filter_high', 'filter_medium', or 'filter_all'
+    
+    await bot.answerCallbackQuery(query.id);
+    
+    let filterText = 'All Events';
+    if (data === 'filter_high') filterText = 'High Impact Only';
+    if (data === 'filter_medium') filterText = 'High & Medium Impact';
+    
+    await bot.editMessageText(`🔍 Checking status for: <b>${filterText}</b>...`, {
+      chat_id: query.message.chat.id,
+      message_id: query.message.message_id,
+      parse_mode: 'HTML'
+    });
 
+    await performSystemCheck(data);
+  });
 })();

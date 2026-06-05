@@ -20,6 +20,19 @@ const sendTelegramMessage = async (text) => {
     console.error('Telegram Send Error:', error.message);
   }
 };
+// Add this under your existing sendTelegramMessage function
 
-// 3. Export both the function AND the bot instance
-module.exports = { sendTelegramMessage, bot };
+const sendTelegramPhoto = async (photoUrl, captionText) => {
+  if (!chatId) {
+    console.error('CHAT_ID missing in .env');
+    return;
+  }
+  try {
+    await bot.sendPhoto(chatId, photoUrl, { caption: captionText, parse_mode: 'HTML' });
+  } catch (error) {
+    console.error('Telegram Photo Send Error:', error.message);
+  }
+};
+
+// Export the new function
+module.exports = { sendTelegramMessage, sendTelegramPhoto, bot };
