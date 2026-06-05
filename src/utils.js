@@ -11,19 +11,19 @@ const parseTimeText = (dateStr, timeText, year) => {
   const cleanDate = dateStr.replace(/([A-Za-z]+)(\d+)/, '$1 $2').trim();
   const datePart = cleanDate.split(' ').slice(1).join(' '); 
 
+  // Safely assign Bank Holidays to midnight of that day
   if (timeText.toLowerCase().includes('day')) {
-      const m = moment.tz(`${year} ${datePart} 12:00am`, 'YYYY MMM D h:mma', TARGET_TZ);
+      const m = moment.tz(`${year} ${datePart} 00:00`, 'YYYY MMM D HH:mm', TARGET_TZ);
       return m.isValid() ? m.toDate() : null;
   }
   
   const cleanTime = timeText.trim();
   const fullString = `${year} ${datePart} ${cleanTime}`;
   
-  // FIXED: Parse exactly as the target timezone, since we will force FF to send it in this timezone!
+  // Parse directly as SGT. No timezone math needed anymore!
   const m = moment.tz(fullString, 'YYYY MMM D h:mma', TARGET_TZ);
 
   if (!m.isValid()) return null;
-
   return m.toDate();
 };
 

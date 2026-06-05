@@ -1,29 +1,23 @@
 require('dotenv').config();
 
-// --- IMPORTS ---
 const express = require('express');
 const schedule = require('node-schedule');
 const moment = require('moment-timezone');
-const readline = require('readline');
 
 const { fetchCalendar } = require('./scraper');
 const { parseTimeText, formatEventMessage, generateChartUrl } = require('./utils');
 const { sendTelegramMessage, sendTelegramPhoto, bot } = require('./telegram'); 
-const store = require('./store');
 
-// --- DUMMY SERVER FOR RENDER ---
 const app = express();
 const port = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(port, () => console.log(`Web server listening on port ${port}`));
-// -------------------------------
 
 const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
 const SCRAPE_DELAY_MINUTES = 2; 
 const WARNING_MINUTES = 10;
 const SUMMARY_HOUR = 6; 
 
-// --- 1. INDEPENDENT DAILY SUMMARY JOB (Runs at 6:00 AM) ---
 const scheduleDailySummary = () => {
   const rule = new schedule.RecurrenceRule();
   rule.tz = TARGET_TZ;
@@ -37,7 +31,6 @@ const scheduleDailySummary = () => {
     console.log('⏰ 6:00 AM Trigger: Fetching Daily Summary...');
     const now = moment.tz(TARGET_TZ);
 
-    // Weekend Logic
     const dayOfWeek = now.day();
     const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
     let targetDate = now.clone();
@@ -54,23 +47,22 @@ const scheduleDailySummary = () => {
 
     const startOfTarget = targetDate.clone().startOf('day');
     const endOfTarget = targetDate.clone().endOf('day');
+    
     const targetEvents = events.filter(ev => {
       const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
       if (!dateObj) return false;
-      return moment(dateObj).isBetween(startOfTarget, endOfTarget);
+      return moment(dateObj).isBetween(startOfTarget, endOfTarget, null, '[]');
     });
 
     if (targetEvents.length === 0) {
       await sendTelegramMessage(`📅 <b>${displayTitle}:</b>\nNo significant events found.`);
     } else {
       const sortedEvents = [...targetEvents].sort((a, b) => {
-        const tA = parseTimeText(a.dateStr, a.timeText, a.year);
-        const tB = parseTimeText(b.dateStr, b.timeText, b.year);
-        return tA - tB;
+        return parseTimeText(a.dateStr, a.timeText, a.year) - parseTimeText(b.dateStr, b.timeText, b.year);
       });
 
       let digestMsg = `🌅 <b>${displayTitle}:</b>\n\n`;
-      let lastPrintedTime = null; // Track the time for grouping
+      let lastPrintedTime = null; 
 
       sortedEvents.forEach(ev => {
           let icon = '⚪️';
@@ -78,10 +70,11 @@ const scheduleDailySummary = () => {
           if(ev.impact === 'Medium') icon = '🟠';
           if(ev.impact === 'Low') icon = '🟡';
           
+          const isAllDay = ev.timeText.toLowerCase().includes('day');
           const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-          const localTimeStr = ev.timeText.toLowerCase().includes('day') ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
+          // Format as 24-hour time (HH:mm)
+          const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('HH:mm');
           
-          // GROUPING LOGIC
           if (localTimeStr !== lastPrintedTime) {
             digestMsg += `<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
             lastPrintedTime = localTimeStr;
@@ -117,7 +110,6 @@ const groupEventsByTime = (events) => {
   return groups;
 };
 
-// --- CORE FUNCTION: Run Check Logic ---
 const performSystemCheck = async (filterType = 'filter_all') => {
   const now = moment.tz(TARGET_TZ);
   
@@ -133,7 +125,7 @@ const performSystemCheck = async (filterType = 'filter_all') => {
   }
 
   const dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
-  console.log(`[Check] Fetching data for ${targetDate.format('YYYY-MM-DD')} (Query: ${dateQuery})...`);
+  console.log(`[Check] Fetching data for ${targetDate.format('YYYY-MM-DD')}`);
   
   const events = await fetchCalendar(dateQuery);
   
@@ -144,12 +136,11 @@ const performSystemCheck = async (filterType = 'filter_all') => {
     const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
     if (!dateObj) return false;
     
-    const isToday = moment(dateObj).isBetween(startOfTarget, endOfTarget);
+    const isToday = moment(dateObj).isBetween(startOfTarget, endOfTarget, null, '[]');
     if (!isToday) return false;
 
     if (filterType === 'filter_high') return ev.impact === 'High';
     if (filterType === 'filter_medium') return ev.impact === 'High' || ev.impact === 'Medium';
-    
     return true; 
   });
 
@@ -163,24 +154,24 @@ const performSystemCheck = async (filterType = 'filter_all') => {
     await sendTelegramMessage(`No ${filterLabel.toLowerCase()} found for ${displayTitle}.`);
   } else {
     const sortedEvents = [...targetEvents].sort((a, b) => {
-      const tA = parseTimeText(a.dateStr, a.timeText, a.year);
-      const tB = parseTimeText(b.dateStr, b.timeText, b.year);
-      return tA - tB;
+      return parseTimeText(a.dateStr, a.timeText, a.year) - parseTimeText(b.dateStr, b.timeText, b.year);
     });
 
     let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n\n`;
-    let lastPrintedTime = null; // Track the time for grouping
+    let lastPrintedTime = null; 
 
     for (const ev of sortedEvents) {
       let icon = '⚪️';
       if (ev.impact === 'High') icon = '🔴';
       if (ev.impact === 'Medium') icon = '🟠';
       if (ev.impact === 'Low') icon = '🟡';
+      if (ev.impact === 'Non-Economic') icon = '⚪️';
 
+      const isAllDay = ev.timeText.toLowerCase().includes('day');
       const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-      const localTimeStr = ev.timeText.toLowerCase().includes('day') ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
+      // Format as 24-hour time (HH:mm)
+      const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('HH:mm');
 
-      // GROUPING LOGIC
       if (localTimeStr !== lastPrintedTime) {
         detailedMsg += `<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
         lastPrintedTime = localTimeStr;
@@ -201,10 +192,8 @@ const performSystemCheck = async (filterType = 'filter_all') => {
       await sendTelegramMessage(detailedMsg);
     }
   }
-  console.log('[Check] Complete.');
 };
 
-// --- Main Schedule Logic (FOR ALERTS ONLY) ---
 const loadAndSchedule = async () => {
   console.log('--- Starting Load Cycle (Alerts Only) ---');
   
@@ -212,10 +201,7 @@ const loadAndSchedule = async () => {
   const dateQuery = now.format('MMMD.YYYY').toLowerCase();
 
   const events = await fetchCalendar(dateQuery);
-  if (!events || events.length === 0) {
-      console.log('No events found to schedule alerts for.');
-      return;
-  }
+  if (!events || events.length === 0) return;
 
   const startOfTarget = now.clone().startOf('day');
   const endOfTarget = now.clone().endOf('day');
@@ -223,11 +209,8 @@ const loadAndSchedule = async () => {
   const targetEvents = events.filter(ev => {
     const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
     if (!dateObj) return false;
-    const eventTime = moment(dateObj);
-    return eventTime.isBetween(startOfTarget, endOfTarget);
+    return moment(dateObj).isBetween(startOfTarget, endOfTarget, null, '[]');
   });
-
-  console.log(`Found ${targetEvents.length} events for alerts.`);
 
   const eventsByTime = groupEventsByTime(targetEvents);
   for (const [timeKey, groupEvents] of Object.entries(eventsByTime)) {
@@ -240,7 +223,6 @@ const loadAndSchedule = async () => {
         groupEvents.forEach(ev => msg += formatEventMessage(ev) + '\n');
         await sendTelegramMessage(msg);
       });
-      console.log(`   -> Warning set for ${warningTime.format('DD MMM HH:mm')}`);
     }
 
     const scrapeTime = eventTime.clone().add(SCRAPE_DELAY_MINUTES, 'minutes');
@@ -251,7 +233,6 @@ const loadAndSchedule = async () => {
       schedule.scheduleJob(jobName, scrapeTime.toDate(), async () => {
         try {
           const freshEvents = await fetchCalendar(dateQuery);
-          
           for (const oldEv of groupEvents) {
             const freshEv = freshEvents.find(f => (f.id && f.id === oldEv.id) || (f.eventName === oldEv.eventName));
             const targetEv = freshEv || oldEv;
@@ -260,16 +241,11 @@ const loadAndSchedule = async () => {
             resultMsg += formatEventMessage(targetEv);
 
             const chartUrl = generateChartUrl(targetEv);
-
-            if (chartUrl) {
-              await sendTelegramPhoto(chartUrl, resultMsg);
-            } else {
-              await sendTelegramMessage(resultMsg);
-            }
+            if (chartUrl) await sendTelegramPhoto(chartUrl, resultMsg);
+            else await sendTelegramMessage(resultMsg);
           }
         } catch (err) { console.error(err); }
       });
-      console.log(`   -> Result set for ${scrapeTime.format('DD MMM HH:mm')}`);
     }
   }
 };
@@ -278,7 +254,6 @@ const loadAndSchedule = async () => {
   console.log(`Bot starting up in ${TARGET_TZ}...`);
 
   const shutdown = () => {
-    console.log('🛑 Received shutdown signal. Closing bot...');
     bot.stopPolling();
     schedule.gracefulShutdown();
     process.exit(0);
@@ -294,51 +269,30 @@ const loadAndSchedule = async () => {
   rule.hour = 0;
   rule.minute = 1;
   schedule.scheduleJob(rule, async () => {
-    console.log('Midnight reload...');
     await loadAndSchedule();
   });
 
-  console.log("👂 Listening for 'check' on Telegram...");
-  
   bot.on('message', async (msg) => {
     const text = msg.text ? msg.text.toLowerCase().trim() : '';
     if (text === 'check') {
-      console.log(`Received 'check' command from ${msg.chat.username}`);
-      
       const options = {
         reply_markup: {
           inline_keyboard: [
-            [
-              { text: '🔴 High Impact', callback_data: 'filter_high' },
-              { text: '🟠 Medium & Up', callback_data: 'filter_medium' }
-            ],
-            [
-              { text: '📋 All Events', callback_data: 'filter_all' }
-            ]
+            [ { text: '🔴 High Impact', callback_data: 'filter_high' }, { text: '🟠 Medium & Up', callback_data: 'filter_medium' } ],
+            [ { text: '📋 All Events', callback_data: 'filter_all' } ]
           ]
         },
         parse_mode: 'HTML'
       };
-
       await bot.sendMessage(msg.chat.id, "🔍 <b>Select the impact level you want to check:</b>", options);
     }
   });
 
   bot.on('callback_query', async (query) => {
     const data = query.data; 
-    
     await bot.answerCallbackQuery(query.id);
-    
-    let filterText = 'All Events';
-    if (data === 'filter_high') filterText = 'High Impact Only';
-    if (data === 'filter_medium') filterText = 'High & Medium Impact';
-    
-    await bot.editMessageText(`🔍 Checking status for: <b>${filterText}</b>...`, {
-      chat_id: query.message.chat.id,
-      message_id: query.message.message_id,
-      parse_mode: 'HTML'
-    });
-
+    let filterText = data === 'filter_high' ? 'High Impact Only' : data === 'filter_medium' ? 'High & Medium Impact' : 'All Events';
+    await bot.editMessageText(`🔍 Checking status for: <b>${filterText}</b>...`, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'HTML' });
     await performSystemCheck(data);
   });
 })();
