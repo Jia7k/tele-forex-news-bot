@@ -57,7 +57,7 @@ const scheduleDailySummary = () => {
         return parseTimeText(a.dateStr, a.timeText, a.year) - parseTimeText(b.dateStr, b.timeText, b.year);
       });
 
-      let digestMsg = `🌅 <b>${displayTitle}:</b>\n\n`;
+      let digestMsg = `🌅 <b>${displayTitle}:</b>\n`;
       let lastPrintedTime = null; 
 
       sortedEvents.forEach(ev => {
@@ -72,14 +72,14 @@ const scheduleDailySummary = () => {
           const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
           
           if (localTimeStr !== lastPrintedTime) {
-            digestMsg += `${localTimeStr} ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+            digestMsg += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
             lastPrintedTime = localTimeStr;
           } else {
-            digestMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+            digestMsg += `\n${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
           }
 
           digestMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
-          digestMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
+          digestMsg += `└ Prev: ${ev.previous || '--'}`;
       });
 
       if (digestMsg.length > 4000) {
@@ -151,7 +151,7 @@ const performSystemCheck = async (filterType = 'filter_all') => {
       return parseTimeText(a.dateStr, a.timeText, a.year) - parseTimeText(b.dateStr, b.timeText, b.year);
     });
 
-    let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n\n`;
+    let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n`;
     let lastPrintedTime = null; 
 
     for (const ev of sortedEvents) {
@@ -166,15 +166,15 @@ const performSystemCheck = async (filterType = 'filter_all') => {
       const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
 
       if (localTimeStr !== lastPrintedTime) {
-        detailedMsg += `${localTimeStr} ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+        detailedMsg += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
         lastPrintedTime = localTimeStr;
       } else {
-        detailedMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+        detailedMsg += `\n${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
       }
 
       detailedMsg += `├ Act: ${ev.actual || '--'}\n`;
       detailedMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
-      detailedMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
+      detailedMsg += `└ Prev: ${ev.previous || '--'}`;
     }
 
     if (detailedMsg.length > 4000) {
@@ -264,24 +264,7 @@ const loadAndSchedule = async () => {
   bot.on('message', async (msg) => {
     const text = msg.text ? msg.text.toLowerCase().trim() : '';
     if (text === 'check') {
-      const options = {
-        reply_markup: {
-          inline_keyboard: [
-            [ { text: '🔴 High Impact', callback_data: 'filter_high' }, { text: '🟠 Medium & Up', callback_data: 'filter_medium' } ],
-            [ { text: '📋 All Events', callback_data: 'filter_all' } ]
-          ]
-        },
-        parse_mode: 'HTML'
-      };
-      await bot.sendMessage(msg.chat.id, "🔍 <b>Select the impact level you want to check:</b>", options);
+      await performSystemCheck('filter_all');
     }
-  });
-
-  bot.on('callback_query', async (query) => {
-    const data = query.data; 
-    await bot.answerCallbackQuery(query.id);
-    let filterText = data === 'filter_high' ? 'High Impact Only' : data === 'filter_medium' ? 'High & Medium Impact' : 'All Events';
-    await bot.editMessageText(`🔍 Checking status for: <b>${filterText}</b>...`, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: 'HTML' });
-    await performSystemCheck(data);
   });
 })();

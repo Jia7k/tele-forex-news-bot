@@ -12,15 +12,15 @@ const parseTimeText = (dateStr, timeText, year) => {
   const datePart = cleanDate.split(' ').slice(1).join(' '); 
 
   if (timeText.toLowerCase().includes('day')) {
-      const m = moment.tz(`${year} ${datePart} 00:00`, 'YYYY MMM D HH:mm', TARGET_TZ);
+      const m = moment.tz(`${year} ${datePart} 12:00am`, 'YYYY MMM D h:mma', 'America/New_York');
       return m.isValid() ? m.toDate() : null;
   }
   
   const cleanTime = timeText.trim();
   const fullString = `${year} ${datePart} ${cleanTime}`;
   
-  // Parse directly as SGT
-  const m = moment.tz(fullString, 'YYYY MMM D h:mma', TARGET_TZ);
+  // Forex Factory ALWAYS defaults to Eastern Time for scrapers. We MUST parse as NY time to prevent 12-hour shifts.
+  const m = moment.tz(fullString, 'YYYY MMM D h:mma', 'America/New_York');
 
   if (!m.isValid()) return null;
   return m.toDate();
@@ -31,7 +31,7 @@ const formatEventMessage = (ev) => {
   if (ev.impact === 'High') impactIcon = '🔴';
   else if (ev.impact === 'Medium') impactIcon = '🟠';
   else if (ev.impact === 'Low') impactIcon = '🟡';
-  else if (ev.impact === 'Non-Economic') impactIcon = '⚪️';
+  else if (ev.impact === 'Non-Economic') impactIcon = '⚪️'; 
 
   const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${ev.actual}</b>` : '-';
   const forecast = (ev.forecast && ev.forecast.trim() !== '') ? ev.forecast : '-';
