@@ -19,13 +19,16 @@ const parseTimeText = (dateStr, timeText, year) => {
   const datePart = cleanDate.split(' ').slice(1).join(' '); // "Oct 27"
   
   const fullString = `${year} ${datePart} ${cleanTime}`;
-  const m = moment.tz(fullString, 'YYYY MMM D h:mma', TARGET_TZ);
+  
+  // FIX 3: Parse explicitly as Eastern Time. 
+  // m.toDate() will then convert this safely into a universal UTC Date object
+  // which index.js will perfectly adapt to your local Asia/Singapore timezone.
+  const m = moment.tz(fullString, 'YYYY MMM D h:mma', 'America/New_York');
 
   if (!m.isValid()) return null;
 
   return m.toDate();
 };
-
 /**
  * Formats the event into a clean vertical stack for mobile.
  */

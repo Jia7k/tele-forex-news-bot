@@ -41,27 +41,27 @@ const fetchCalendar = async (dateQuery = '') => {
     $('tr.calendar__row').each((i, el) => {
       const row = $(el);
 
-      if (row.hasClass('calendar__row--new-day')) {
-        const dateText = row.find('.date').text().trim(); 
-        if (dateText) {
-          currentDateStr = dateText;
-          lastTimeText = ""; 
-        }
-        return; 
+      // FIX 1: Extract Date directly from the event row's first column
+      const dateText = row.find('.date, .calendar__date').text().trim();
+      if (dateText) {
+        currentDateStr = dateText;
+        lastTimeText = ""; // Reset the time cascade for the new day
       }
 
+      // If we somehow don't have a date yet, skip this row
       if (!currentDateStr) return;
 
-      const id = row.data('event-id');
+      // FIX 2: Use .attr() to safely catch the event ID
+      const id = row.attr('data-eventid') || row.attr('data-event-id');
       if (!id) return;
 
-      let timeText = row.find('.calendar__time').text().trim();
+      let timeText = row.find('.calendar__time, .time').text().trim();
       if (timeText && timeText !== '') {
         lastTimeText = timeText;
       } else if (lastTimeText !== '') {
         timeText = lastTimeText;
       } else {
-        return;
+        return; // Skip if there's absolutely no time attached
       }
 
       const currency = row.find('.calendar__currency').text().trim();
