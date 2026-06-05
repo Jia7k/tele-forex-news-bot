@@ -6,9 +6,14 @@ const token = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
 
 // 1. Initialize the Bot with Polling enabled
-const bot = new TelegramBot(token, { polling: true });
-
-// 2. Helper function to send messages (used by your scraper logic)
+const bot = new TelegramBot(token, { 
+  polling: true,
+  request: {
+    agentOptions: {
+      family: 4 // This forces IPv4 and fixes the EFATAL AggregateError
+    }
+  }
+});// 2. Helper function to send messages (used by your scraper logic)
 const sendTelegramMessage = async (text) => {
   if (!chatId) {
     console.error('CHAT_ID missing in .env');

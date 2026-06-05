@@ -3,9 +3,6 @@ require('dotenv').config();
 
 const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
 
-/**
- * Combines date string, year, and time string into a JS Date object.
- */
 const parseTimeText = (dateStr, timeText, year) => {
   if (!timeText || timeText.toLowerCase().includes('tentative') || timeText === '') {
     return null;
@@ -14,63 +11,49 @@ const parseTimeText = (dateStr, timeText, year) => {
   const cleanDate = dateStr.replace(/([A-Za-z]+)(\d+)/, '$1 $2').trim();
   const datePart = cleanDate.split(' ').slice(1).join(' '); 
 
-  // Safely handle Bank Holidays
   if (timeText.toLowerCase().includes('day')) {
-      const m = moment.tz(`${year} ${datePart} 12:00am`, 'YYYY MMM D h:mma', 'America/New_York');
+      const m = moment.tz(`${year} ${datePart} 12:00am`, 'YYYY MMM D h:mma', TARGET_TZ);
       return m.isValid() ? m.toDate() : null;
   }
   
   const cleanTime = timeText.trim();
   const fullString = `${year} ${datePart} ${cleanTime}`;
-  const m = moment.tz(fullString, 'YYYY MMM D h:mma', 'America/New_York');
+  
+  // FIXED: Parse exactly as the target timezone, since we will force FF to send it in this timezone!
+  const m = moment.tz(fullString, 'YYYY MMM D h:mma', TARGET_TZ);
 
   if (!m.isValid()) return null;
+
   return m.toDate();
 };
-/**
- * Formats the event into a clean vertical stack for mobile.
- */
+
 const formatEventMessage = (ev) => {
-  // 1. Map Impact to Icon
   let impactIcon = '⚪️';
   if (ev.impact === 'High') impactIcon = '🔴';
   else if (ev.impact === 'Medium') impactIcon = '🟠';
   else if (ev.impact === 'Low') impactIcon = '🟡';
   else if (ev.impact === 'Non-Economic') impactIcon = '⚪️';
 
-  // 2. Handle empty data
   const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${ev.actual}</b>` : '-';
   const forecast = (ev.forecast && ev.forecast.trim() !== '') ? ev.forecast : '-';
   const previous = (ev.previous && ev.previous.trim() !== '') ? ev.previous : '-';
 
-  // 3. Vertical Format
-  return `
-${impactIcon} <b>${ev.currency} - ${ev.eventName}</b>
-├ Act: ${actual}
-├ Fcst: ${forecast}
-└ Prev: ${previous}
-`;
+  return `\n${impactIcon} <b>${ev.currency} - ${ev.eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n└ Prev: ${previous}\n`;
 };
-// --- NEW DATA PARSER & CHART GENERATOR ---
 
-// Helper: Converts "1.5K", "-0.2%", "150B" into flat numbers for charting
 const cleanNumber = (str) => {
   if (!str || str.trim() === '' || str === '-' || str === '--') return null;
   const match = str.match(/-?[\d.]+/);
   return match ? parseFloat(match[0]) : null;
 };
 
-// Generates a QuickChart URL comparing Previous vs Forecast vs Actual
 const generateChartUrl = (ev) => {
   const prev = cleanNumber(ev.previous);
   const fcst = cleanNumber(ev.forecast);
   const act = cleanNumber(ev.actual);
 
-  // If there is no actual data released yet, skip generating a chart
   if (act === null) return null;
 
-  // Visual Context: Green if Actual beat Forecast, Red if it missed.
-  // Note: For some events (like Unemployment), lower is better. You can refine this logic later!
   const actColor = act >= (fcst !== null ? fcst : prev) ? 'rgba(46, 204, 113, 0.8)' : 'rgba(231, 76, 60, 0.8)';
 
   const chartConfig = {

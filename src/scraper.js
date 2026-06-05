@@ -3,15 +3,19 @@ const moment = require('moment-timezone');
 require('dotenv').config();
 
 const BASE = process.env.BASE_URL || 'https://www.forexfactory.com';
+const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
 
 const fetchCalendar = async (dateQuery = '') => {
   const { gotScraping } = await import('got-scraping');
 
-  // Helper function to scrape a single URL
   const scrapePage = async (url) => {
     try {
       const response = await gotScraping({
         url,
+        headers: {
+          // FORCE Forex Factory to return SGT. This prevents IP geolocation bugs!
+          'cookie': `timezone=${TARGET_TZ};` 
+        },
         headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'], locales: ['en-US'], operatingSystems: ['windows'] },
         retry: { limit: 2, methods: ['GET'], statusCodes: [408, 413, 429, 500, 502, 503, 504, 521, 522, 524] },
         timeout: { request: 30000 },
@@ -72,7 +76,6 @@ const fetchCalendar = async (dateQuery = '') => {
 
   if (!dateQuery) return await scrapePage(`${BASE}/calendar`);
 
-  // Fetch 48-hour window to account for the EDT to SGT timezone overlap
   const targetDate = moment(dateQuery, 'MMMD.YYYY');
   const yesterdayQuery = targetDate.clone().subtract(1, 'days').format('MMMD.YYYY').toLowerCase();
 
