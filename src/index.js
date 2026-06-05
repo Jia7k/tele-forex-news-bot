@@ -27,7 +27,7 @@ const SUMMARY_HOUR = 6;
 const scheduleDailySummary = () => {
   const rule = new schedule.RecurrenceRule();
   rule.tz = TARGET_TZ;
-  rule.hour = SUMMARY_HOUR; // 6
+  rule.hour = SUMMARY_HOUR; 
   rule.minute = 0;
   rule.second = 0;
 
@@ -80,8 +80,11 @@ const scheduleDailySummary = () => {
           if(ev.impact === 'Medium') icon = '🟠';
           if(ev.impact === 'Low') icon = '🟡';
           
-          // Vertical Stack Format for Summary
-          digestMsg += `<b>${ev.timeText} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
+          // CONVERT DISPLAY TIME TO SINGAPORE TIME
+          const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
+          const localTimeStr = ev.timeText.toLowerCase().includes('day') ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
+          
+          digestMsg += `<b>${localTimeStr} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
           digestMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
           digestMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
       });
@@ -145,7 +148,7 @@ const performSystemCheck = async (filterType = 'filter_all') => {
     if (filterType === 'filter_high') return ev.impact === 'High';
     if (filterType === 'filter_medium') return ev.impact === 'High' || ev.impact === 'Medium';
     
-    return true; // filter_all
+    return true; 
   });
 
   let filterLabel = 'All Events';
@@ -171,7 +174,11 @@ const performSystemCheck = async (filterType = 'filter_all') => {
       if (ev.impact === 'Medium') icon = '🟠';
       if (ev.impact === 'Low') icon = '🟡';
 
-      detailedMsg += `<b>${ev.timeText} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
+      // CONVERT DISPLAY TIME TO SINGAPORE TIME
+      const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
+      const localTimeStr = ev.timeText.toLowerCase().includes('day') ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
+
+      detailedMsg += `<b>${localTimeStr} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
       detailedMsg += `├ Act: ${ev.actual || '--'}\n`;
       detailedMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
       detailedMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
@@ -193,7 +200,6 @@ const loadAndSchedule = async () => {
   console.log('--- Starting Load Cycle (Alerts Only) ---');
   
   const now = moment.tz(TARGET_TZ);
-  
   const dateQuery = now.format('MMMD.YYYY').toLowerCase();
 
   const events = await fetchCalendar(dateQuery);
@@ -214,7 +220,6 @@ const loadAndSchedule = async () => {
 
   console.log(`Found ${targetEvents.length} events for alerts.`);
 
-  // 1. Schedule Alerts (Warnings & Results)
   const eventsByTime = groupEventsByTime(targetEvents);
   for (const [timeKey, groupEvents] of Object.entries(eventsByTime)) {
     const eventTime = moment(timeKey);
@@ -234,7 +239,6 @@ const loadAndSchedule = async () => {
       const jobName = `result-${timeKey}`;
       if (schedule.scheduledJobs[jobName]) continue;
       
-      // THIS IS THE UPDATED BLOCK WITH CHART LOGIC
       schedule.scheduleJob(jobName, scrapeTime.toDate(), async () => {
         try {
           const freshEvents = await fetchCalendar(dateQuery);
@@ -249,10 +253,8 @@ const loadAndSchedule = async () => {
             const chartUrl = generateChartUrl(targetEv);
 
             if (chartUrl) {
-              // Send the message as an image caption if a chart was generated
               await sendTelegramPhoto(chartUrl, resultMsg);
             } else {
-              // Fallback to text if there's no data to chart
               await sendTelegramMessage(resultMsg);
             }
           }
@@ -275,13 +277,9 @@ const loadAndSchedule = async () => {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  // 1. Initialize the 6 AM Job immediately
   scheduleDailySummary();
-
-  // 2. Load today's alerts
   await loadAndSchedule();
 
-  // 3. Set up Midnight Reload (to refresh alerts for the new day)
   const rule = new schedule.RecurrenceRule();
   rule.tz = TARGET_TZ;
   rule.hour = 0;
@@ -293,7 +291,6 @@ const loadAndSchedule = async () => {
 
   console.log("👂 Listening for 'check' on Telegram...");
   
-  // 1. Listen for the 'check' command and send the button menu
   bot.on('message', async (msg) => {
     const text = msg.text ? msg.text.toLowerCase().trim() : '';
     if (text === 'check') {
@@ -318,9 +315,8 @@ const loadAndSchedule = async () => {
     }
   });
 
-  // 2. Listen for the button clicks
   bot.on('callback_query', async (query) => {
-    const data = query.data; // This will be 'filter_high', 'filter_medium', or 'filter_all'
+    const data = query.data; 
     
     await bot.answerCallbackQuery(query.id);
     
