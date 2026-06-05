@@ -67,19 +67,19 @@ const scheduleDailySummary = () => {
           if(ev.impact === 'Low') icon = '🟡';
           if(ev.impact === 'Non-Economic') icon = '⚪️';
           
-          const isAllDay = ev.timeText.toLowerCase().includes('day');
-          const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-          const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
+          // DIRECT OUTPUT: Print exactly what Forex Factory gave us
+          const displayTime = ev.timeText.toLowerCase().includes('day') ? 'All Day' : ev.timeText.toLowerCase();
           
-          if (localTimeStr !== lastPrintedTime) {
-            digestMsg += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
-            lastPrintedTime = localTimeStr;
+          if (displayTime !== lastPrintedTime) {
+            digestMsg += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${displayTime}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+            lastPrintedTime = displayTime;
           } else {
-            digestMsg += `\n${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+            digestMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
           }
 
+          digestMsg += `├ Act: ${ev.actual || '--'}\n`;
           digestMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
-          digestMsg += `└ Prev: ${ev.previous || '--'}`;
+          digestMsg += `└ Prev: ${ev.previous || '--'}\n`;
       });
 
       if (digestMsg.length > 4000) {
@@ -105,7 +105,7 @@ const groupEventsByTime = (events) => {
   return groups;
 };
 
-const performSystemCheck = async (filterType = 'filter_all') => {
+const performSystemCheck = async () => {
   const now = moment.tz(TARGET_TZ);
   
   const dayOfWeek = now.day();
@@ -129,23 +129,11 @@ const performSystemCheck = async (filterType = 'filter_all') => {
   const targetEvents = events.filter(ev => {
     const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
     if (!dateObj) return false;
-    
-    const isToday = moment(dateObj).isBetween(startOfTarget, endOfTarget, null, '[]');
-    if (!isToday) return false;
-
-    if (filterType === 'filter_high') return ev.impact === 'High';
-    if (filterType === 'filter_medium') return ev.impact === 'High' || ev.impact === 'Medium';
-    return true; 
+    return moment(dateObj).isBetween(startOfTarget, endOfTarget, null, '[]');
   });
 
-  let filterLabel = 'All Events';
-  if (filterType === 'filter_high') filterLabel = 'High Impact Only';
-  if (filterType === 'filter_medium') filterLabel = 'High & Medium Impact';
-
-  await sendTelegramMessage(`🛠 <b>System Check (${filterLabel})</b>\nStatus: 🟢 Online\nTime: ${now.format('HH:mm:ss')}\nMode: ${isWeekend ? 'Weekend' : 'Weekday'}`);
-
   if (targetEvents.length === 0) {
-    await sendTelegramMessage(`No ${filterLabel.toLowerCase()} found for ${displayTitle}.`);
+    await sendTelegramMessage(`No events found for ${displayTitle}.`);
   } else {
     const sortedEvents = [...targetEvents].sort((a, b) => {
       return parseTimeText(a.dateStr, a.timeText, a.year) - parseTimeText(b.dateStr, b.timeText, b.year);
@@ -161,20 +149,19 @@ const performSystemCheck = async (filterType = 'filter_all') => {
       if (ev.impact === 'Low') icon = '🟡';
       if (ev.impact === 'Non-Economic') icon = '⚪️';
 
-      const isAllDay = ev.timeText.toLowerCase().includes('day');
-      const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-      const localTimeStr = isAllDay ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
+      // DIRECT OUTPUT: Print exactly what Forex Factory gave us
+      const displayTime = ev.timeText.toLowerCase().includes('day') ? 'All Day' : ev.timeText.toLowerCase();
 
-      if (localTimeStr !== lastPrintedTime) {
-        detailedMsg += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
-        lastPrintedTime = localTimeStr;
+      if (displayTime !== lastPrintedTime) {
+        detailedMsg += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${displayTime}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+        lastPrintedTime = displayTime;
       } else {
-        detailedMsg += `\n${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+        detailedMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
       }
 
       detailedMsg += `├ Act: ${ev.actual || '--'}\n`;
       detailedMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
-      detailedMsg += `└ Prev: ${ev.previous || '--'}`;
+      detailedMsg += `└ Prev: ${ev.previous || '--'}\n`;
     }
 
     if (detailedMsg.length > 4000) {
@@ -264,7 +251,7 @@ const loadAndSchedule = async () => {
   bot.on('message', async (msg) => {
     const text = msg.text ? msg.text.toLowerCase().trim() : '';
     if (text === 'check') {
-      await performSystemCheck('filter_all');
+      await performSystemCheck();
     }
   });
 })();

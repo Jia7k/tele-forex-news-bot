@@ -12,15 +12,15 @@ const parseTimeText = (dateStr, timeText, year) => {
   const datePart = cleanDate.split(' ').slice(1).join(' '); 
 
   if (timeText.toLowerCase().includes('day')) {
-      const m = moment.tz(`${year} ${datePart} 12:00am`, 'YYYY MMM D h:mma', 'America/New_York');
+      const m = moment.tz(`${year} ${datePart} 00:00`, 'YYYY MMM D HH:mm', TARGET_TZ);
       return m.isValid() ? m.toDate() : null;
   }
   
   const cleanTime = timeText.trim();
   const fullString = `${year} ${datePart} ${cleanTime}`;
   
-  // Forex Factory ALWAYS defaults to Eastern Time for scrapers. We MUST parse as NY time to prevent 12-hour shifts.
-  const m = moment.tz(fullString, 'YYYY MMM D h:mma', 'America/New_York');
+  // DIRECT PARSE: Treats whatever time FF returned as the literal target time
+  const m = moment.tz(fullString, 'YYYY MMM D h:mma', TARGET_TZ);
 
   if (!m.isValid()) return null;
   return m.toDate();
@@ -31,11 +31,11 @@ const formatEventMessage = (ev) => {
   if (ev.impact === 'High') impactIcon = '🔴';
   else if (ev.impact === 'Medium') impactIcon = '🟠';
   else if (ev.impact === 'Low') impactIcon = '🟡';
-  else if (ev.impact === 'Non-Economic') impactIcon = '⚪️'; 
+  else if (ev.impact === 'Non-Economic') impactIcon = '⚪️';
 
-  const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${ev.actual}</b>` : '-';
-  const forecast = (ev.forecast && ev.forecast.trim() !== '') ? ev.forecast : '-';
-  const previous = (ev.previous && ev.previous.trim() !== '') ? ev.previous : '-';
+  const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${ev.actual}</b>` : '--';
+  const forecast = (ev.forecast && ev.forecast.trim() !== '') ? ev.forecast : '--';
+  const previous = (ev.previous && ev.previous.trim() !== '') ? ev.previous : '--';
 
   return `\n${impactIcon} <b>${ev.currency} - ${ev.eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n└ Prev: ${previous}\n`;
 };
@@ -52,7 +52,6 @@ const generateChartUrl = (ev) => {
   const act = cleanNumber(ev.actual);
 
   if (act === null) return null;
-
   const actColor = act >= (fcst !== null ? fcst : prev) ? 'rgba(46, 204, 113, 0.8)' : 'rgba(231, 76, 60, 0.8)';
 
   const chartConfig = {
