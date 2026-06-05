@@ -49,11 +49,9 @@ const scheduleDailySummary = () => {
       displayTitle = `Monday ${targetDate.format('DD MMM')} (Advance View)`;
     }
 
-    // Explicit Date Query
     const dateQuery = targetDate.format('MMMD.YYYY').toLowerCase();
     const events = await fetchCalendar(dateQuery);
 
-    // Filter for Target Date
     const startOfTarget = targetDate.clone().startOf('day');
     const endOfTarget = targetDate.clone().endOf('day');
     const targetEvents = events.filter(ev => {
@@ -62,7 +60,6 @@ const scheduleDailySummary = () => {
       return moment(dateObj).isBetween(startOfTarget, endOfTarget);
     });
 
-    // Send Message
     if (targetEvents.length === 0) {
       await sendTelegramMessage(`📅 <b>${displayTitle}:</b>\nNo significant events found.`);
     } else {
@@ -73,6 +70,7 @@ const scheduleDailySummary = () => {
       });
 
       let digestMsg = `🌅 <b>${displayTitle}:</b>\n\n`;
+      let lastPrintedTime = null; // Track the time for grouping
 
       sortedEvents.forEach(ev => {
           let icon = '⚪️';
@@ -80,11 +78,17 @@ const scheduleDailySummary = () => {
           if(ev.impact === 'Medium') icon = '🟠';
           if(ev.impact === 'Low') icon = '🟡';
           
-          // CONVERT DISPLAY TIME TO SINGAPORE TIME
           const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
           const localTimeStr = ev.timeText.toLowerCase().includes('day') ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
           
-          digestMsg += `<b>${localTimeStr} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
+          // GROUPING LOGIC
+          if (localTimeStr !== lastPrintedTime) {
+            digestMsg += `<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+            lastPrintedTime = localTimeStr;
+          } else {
+            digestMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+          }
+
           digestMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
           digestMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
       });
@@ -140,11 +144,9 @@ const performSystemCheck = async (filterType = 'filter_all') => {
     const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
     if (!dateObj) return false;
     
-    // Time check
     const isToday = moment(dateObj).isBetween(startOfTarget, endOfTarget);
     if (!isToday) return false;
 
-    // Filter check based on the button pressed
     if (filterType === 'filter_high') return ev.impact === 'High';
     if (filterType === 'filter_medium') return ev.impact === 'High' || ev.impact === 'Medium';
     
@@ -167,6 +169,7 @@ const performSystemCheck = async (filterType = 'filter_all') => {
     });
 
     let detailedMsg = `📋 <b>Detailed Report (${displayTitle}):</b>\n\n`;
+    let lastPrintedTime = null; // Track the time for grouping
 
     for (const ev of sortedEvents) {
       let icon = '⚪️';
@@ -174,11 +177,17 @@ const performSystemCheck = async (filterType = 'filter_all') => {
       if (ev.impact === 'Medium') icon = '🟠';
       if (ev.impact === 'Low') icon = '🟡';
 
-      // CONVERT DISPLAY TIME TO SINGAPORE TIME
       const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
       const localTimeStr = ev.timeText.toLowerCase().includes('day') ? 'All Day' : moment(dateObj).tz(TARGET_TZ).format('h:mma');
 
-      detailedMsg += `<b>${localTimeStr} ${icon} ${ev.currency} - ${ev.eventName}</b>\n`;
+      // GROUPING LOGIC
+      if (localTimeStr !== lastPrintedTime) {
+        detailedMsg += `<b>${localTimeStr}</b> ${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+        lastPrintedTime = localTimeStr;
+      } else {
+        detailedMsg += `${icon} <b>${ev.currency} - ${ev.eventName}</b>\n`;
+      }
+
       detailedMsg += `├ Act: ${ev.actual || '--'}\n`;
       detailedMsg += `├ Fcst: ${ev.forecast || '--'}\n`;
       detailedMsg += `└ Prev: ${ev.previous || '--'}\n\n`;
