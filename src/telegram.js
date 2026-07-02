@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const TelegramBot = require('node-telegram-bot-api');
 
 // Make sure your .env has TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
@@ -14,26 +14,28 @@ const bot = new TelegramBot(token, {
     }
   }
 });// 2. Helper function to send messages (used by your scraper logic)
-const sendTelegramMessage = async (text) => {
-  if (!chatId) {
+const sendTelegramMessage = async (text, targetChatId = chatId) => {
+  const recipient = targetChatId ?? chatId;
+  if (!recipient) {
     console.error('CHAT_ID missing in .env');
     return;
   }
   try {
-    await bot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+    await bot.sendMessage(recipient, text, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('Telegram Send Error:', error.message);
   }
 };
 // Add this under your existing sendTelegramMessage function
 
-const sendTelegramPhoto = async (photoUrl, captionText) => {
-  if (!chatId) {
+const sendTelegramPhoto = async (photoUrl, captionText, targetChatId = chatId) => {
+  const recipient = targetChatId ?? chatId;
+  if (!recipient) {
     console.error('CHAT_ID missing in .env');
     return;
   }
   try {
-    await bot.sendPhoto(chatId, photoUrl, { caption: captionText, parse_mode: 'HTML' });
+    await bot.sendPhoto(recipient, photoUrl, { caption: captionText, parse_mode: 'HTML' });
   } catch (error) {
     console.error('Telegram Photo Send Error:', error.message);
   }

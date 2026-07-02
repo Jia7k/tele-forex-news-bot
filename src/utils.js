@@ -1,43 +1,110 @@
 const moment = require('moment-timezone');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
+const MONTHS = {
+  jan: 'Jan',
+  feb: 'Feb',
+  mar: 'Mar',
+  apr: 'Apr',
+  may: 'May',
+  jun: 'Jun',
+  jul: 'Jul',
+  aug: 'Aug',
+  sep: 'Sep',
+  oct: 'Oct',
+  nov: 'Nov',
+  dec: 'Dec',
+};
+
+const TIME_FORMATS = [
+  'YYYY MMM D h:mma',
+  'YYYY MMM D ha',
+  'YYYY MMM D H:mm',
+  'YYYY MMM D HH:mm',
+];
+
+const normalizeText = (text) => (text || '').replace(/\s+/g, ' ').trim();
+const getTimezoneLabel = () => (TARGET_TZ === 'Asia/Singapore' ? 'SGT' : TARGET_TZ);
+
+const extractDatePart = (dateStr) => {
+  const cleanDate = normalizeText(dateStr)
+    .replace(/([A-Za-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Za-z])/g, '$1 $2');
+  const match = cleanDate.match(
+    /(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i
+  );
+
+  if (!match) return null;
+
+  const month = MONTHS[match[1].slice(0, 3).toLowerCase()];
+  return `${month} ${Number(match[2])}`;
+};
+
+const parseDateText = (dateStr, year) => {
+  const datePart = extractDatePart(dateStr);
+  if (!datePart) return null;
+
+  const m = moment.tz(`${year} ${datePart} 00:00`, 'YYYY MMM D HH:mm', true, TARGET_TZ);
+  return m.isValid() ? m.toDate() : null;
+};
 
 const parseTimeText = (dateStr, timeText, year) => {
-  if (!timeText || timeText.toLowerCase().includes('tentative') || timeText === '') {
+  const cleanTime = normalizeText(timeText).toLowerCase().replace(/\./g, '');
+  const datePart = extractDatePart(dateStr);
+
+  if (!cleanTime || cleanTime.includes('tentative') || !datePart) {
     return null;
   }
 
-  const cleanDate = dateStr.replace(/([A-Za-z]+)(\d+)/, '$1 $2').trim();
-  const datePart = cleanDate.split(' ').slice(1).join(' '); 
-
-  if (timeText.toLowerCase().includes('day')) {
-      const m = moment.tz(`${year} ${datePart} 00:00`, 'YYYY MMM D HH:mm', TARGET_TZ);
-      return m.isValid() ? m.toDate() : null;
+  if (cleanTime.includes('day')) {
+    const m = moment.tz(`${year} ${datePart} 00:00`, 'YYYY MMM D HH:mm', true, TARGET_TZ);
+    return m.isValid() ? m.toDate() : null;
   }
-  
-  const cleanTime = timeText.trim();
-  const fullString = `${year} ${datePart} ${cleanTime}`;
-  
-  // DIRECT PARSE: Treats whatever time FF returned as the literal target time
-  const m = moment.tz(fullString, 'YYYY MMM D h:mma', TARGET_TZ);
+
+  const fullString = `${year} ${datePart} ${cleanTime.replace(/\s+/g, '')}`;
+  const m = moment.tz(fullString, TIME_FORMATS, true, TARGET_TZ);
 
   if (!m.isValid()) return null;
   return m.toDate();
 };
 
+const formatEventTime = (ev) => {
+  const cleanTime = normalizeText(ev.timeText).toLowerCase();
+  const timezoneLabel = getTimezoneLabel();
+
+  if (!cleanTime) return `Unscheduled (${timezoneLabel})`;
+  if (cleanTime.includes('tentative')) return 'Tentative';
+  if (cleanTime.includes('day')) return `All Day (${timezoneLabel})`;
+
+  const parsedTime = parseTimeText(ev.dateStr, ev.timeText, ev.year);
+  if (!parsedTime) return `${normalizeText(ev.timeText)} ${timezoneLabel}`;
+
+  return `${moment(parsedTime).tz(TARGET_TZ).format('h:mma')} ${timezoneLabel}`;
+};
+
+const escapeHtml = (value) => normalizeText(value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
+const getImpactIcon = (impact) => {
+  if (impact === 'High') return '🔴';
+  if (impact === 'Medium') return '🟠';
+  if (impact === 'Low') return '🟡';
+  return '⚪️';
+};
+
 const formatEventMessage = (ev) => {
-  let impactIcon = '⚪️';
-  if (ev.impact === 'High') impactIcon = '🔴';
-  else if (ev.impact === 'Medium') impactIcon = '🟠';
-  else if (ev.impact === 'Low') impactIcon = '🟡';
-  else if (ev.impact === 'Non-Economic') impactIcon = '⚪️';
+  const impactIcon = getImpactIcon(ev.impact);
 
-  const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${ev.actual}</b>` : '--';
-  const forecast = (ev.forecast && ev.forecast.trim() !== '') ? ev.forecast : '--';
-  const previous = (ev.previous && ev.previous.trim() !== '') ? ev.previous : '--';
+  const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${escapeHtml(ev.actual)}</b>` : '--';
+  const forecast = (ev.forecast && ev.forecast.trim() !== '') ? escapeHtml(ev.forecast) : '--';
+  const previous = (ev.previous && ev.previous.trim() !== '') ? escapeHtml(ev.previous) : '--';
+  const currency = escapeHtml(ev.currency);
+  const eventName = escapeHtml(ev.eventName);
 
-  return `\n${impactIcon} <b>${ev.currency} - ${ev.eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n└ Prev: ${previous}\n`;
+  return `\n${impactIcon} <b>${currency} - ${eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n└ Prev: ${previous}\n`;
 };
 
 const cleanNumber = (str) => {
@@ -74,4 +141,13 @@ const generateChartUrl = (ev) => {
   return `https://quickchart.io/chart?w=500&h=300&c=${encodedConfig}&bkg=white`;
 };
 
-module.exports = { parseTimeText, formatEventMessage, generateChartUrl };
+module.exports = {
+  parseDateText,
+  parseTimeText,
+  formatEventMessage,
+  formatEventTime,
+  generateChartUrl,
+  escapeHtml,
+  getImpactIcon,
+  getTimezoneLabel,
+};

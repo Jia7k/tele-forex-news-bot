@@ -1,8 +1,55 @@
 const cheerio = require('cheerio');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const BASE = process.env.BASE_URL || 'https://www.forexfactory.com';
 const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
+
+const normalizeText = (text) => (text || '').replace(/\s+/g, ' ').trim();
+
+const getYearFromDateQuery = (dateQuery) => {
+  const match = String(dateQuery || '').match(/\.(\d{4})$/);
+  return match ? Number(match[1]) : new Date().getFullYear();
+};
+
+const getDateText = (row) => {
+  const dateCellText =
+    normalizeText(row.find('.calendar__date .date').first().text()) ||
+    normalizeText(row.find('.calendar__date').first().text()) ||
+    normalizeText(row.find('td.date, .date').first().text());
+
+  if (dateCellText) return dateCellText;
+
+  if (row.hasClass('calendar__row--day-breaker')) {
+    return normalizeText(row.find('.calendar__cell').first().text());
+  }
+
+  return '';
+};
+
+const getImpact = (impactClass) => {
+  const className = impactClass || '';
+
+  if (className.includes('red')) return 'High';
+  if (className.includes('ora') || className.includes('orange')) return 'Medium';
+  if (className.includes('yel') || className.includes('yellow')) return 'Low';
+  if (
+    className.includes('gra') ||
+    className.includes('gray') ||
+    className.includes('grey') ||
+    className.includes('holiday')
+  ) {
+    return 'Non-Economic';
+  }
+
+  return 'Low';
+};
+
+const fallbackEventId = ({ dateStr, timeText, currency, eventName }) => (
+  [dateStr, timeText, currency, eventName]
+    .map((part) => normalizeText(part).toLowerCase())
+    .filter(Boolean)
+    .join('|')
+);
 
 const fetchCalendar = async (dateQuery = '') => {
   const { gotScraping } = await import('got-scraping');
@@ -22,14 +69,15 @@ const fetchCalendar = async (dateQuery = '') => {
     const html = response.body;
     const $ = cheerio.load(html);
     const events = [];
+    const expectedEventCount = $('tr.calendar__row[data-event-id], tr.calendar__row[data-eventid]').length;
     
-    let currentYear = new Date().getFullYear();
+    const currentYear = getYearFromDateQuery(dateQuery);
     let currentDateStr = ""; 
     let lastTimeText = ""; 
 
     $('tr.calendar__row').each((i, el) => {
       const row = $(el);
-      const dateText = row.find('.date, .calendar__date').text().trim();
+      const dateText = getDateText(row);
       
       if (dateText) {
         currentDateStr = dateText;
@@ -38,10 +86,7 @@ const fetchCalendar = async (dateQuery = '') => {
 
       if (!currentDateStr) return;
 
-      const id = row.attr('data-eventid') || row.attr('data-event-id') || `fallback-${Math.random()}`;
-
-      // GRAB THE EXACT RAW TIME TEXT
-      let timeText = row.find('.calendar__time, .time').text().trim();
+      let timeText = normalizeText(row.find('.calendar__time, .time').first().text());
       if (timeText && timeText !== '') {
         lastTimeText = timeText;
       } else if (lastTimeText !== '') {
@@ -50,23 +95,29 @@ const fetchCalendar = async (dateQuery = '') => {
         return; 
       }
 
-      const currency = row.find('.calendar__currency').text().trim();
-      const eventName = row.find('.calendar__event').text().trim();
+      const currency = normalizeText(row.find('.calendar__currency').text());
+      const eventName = normalizeText(row.find('.calendar__event-title').first().text()) ||
+        normalizeText(row.find('.calendar__event').text());
+      if (!currency || !eventName) return;
+
       const impactClass = row.find('.calendar__impact span').attr('class') || '';
-      
-      let impact = 'Low';
-      if (impactClass.includes('red')) impact = 'High';
-      else if (impactClass.includes('orange')) impact = 'Medium';
-      else if (impactClass.includes('yellow')) impact = 'Low';
-      else if (impactClass.includes('gray') || impactClass.includes('holiday')) impact = 'Non-Economic';
+      const id = row.attr('data-eventid') ||
+        row.attr('data-event-id') ||
+        fallbackEventId({ dateStr: currentDateStr, timeText, currency, eventName });
 
       events.push({
-        id, dateStr: currentDateStr, year: currentYear, timeText, currency, impact, eventName,
-        actual: row.find('.calendar__actual').text().trim(),
-        forecast: row.find('.calendar__forecast').text().trim(),
-        previous: row.find('.calendar__previous').text().trim(),
+        id, dateStr: currentDateStr, year: currentYear, timeText, currency,
+        impact: getImpact(impactClass),
+        eventName,
+        actual: normalizeText(row.find('.calendar__actual').text()),
+        forecast: normalizeText(row.find('.calendar__forecast').text()),
+        previous: normalizeText(row.find('.calendar__previous').text()),
       });
     });
+
+    if (expectedEventCount && events.length !== expectedEventCount) {
+      console.warn(`Forex Factory scraper captured ${events.length}/${expectedEventCount} event rows for ${url}`);
+    }
     
     return events;
   } catch (error) {
