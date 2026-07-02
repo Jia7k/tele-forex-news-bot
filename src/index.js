@@ -4,6 +4,7 @@ const express = require('express');
 const schedule = require('node-schedule');
 const moment = require('moment-timezone');
 
+const { config, validateConfig, isAllowedChatId } = require('./config');
 const { fetchCalendar } = require('./scraper');
 const {
   parseDateText,
@@ -15,19 +16,24 @@ const {
   getImpactIcon,
   getTimezoneLabel,
 } = require('./utils');
-const { sendTelegramMessage, sendTelegramPhoto, bot } = require('./telegram'); 
+const { getLastFetch, hasSent, markSent, setLastFetch } = require('./store');
+const { getStatusState, recordScheduleRefresh } = require('./status');
+
+validateConfig();
+const { sendTelegramMessage, sendTelegramPhoto, registerTelegramWebhook, bot } = require('./telegram');
 
 const app = express();
-const port = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Bot is running!'));
-app.listen(port, () => console.log(`Web server listening on port ${port}`));
+const port = config.port;
+app.use(express.json());
 
-const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
-const SCRAPE_DELAY_MINUTES = 2; 
-const WARNING_MINUTES = 10;
-const SUMMARY_HOUR = 6; 
-const RESCHEDULE_INTERVAL_MINUTES = Number(process.env.RESCHEDULE_INTERVAL_MINUTES || 30);
-const TELEGRAM_MESSAGE_CHUNK_SIZE = 3800;
+const TARGET_TZ = config.targetTz;
+const SCRAPE_DELAY_MINUTES = config.scrapeDelayMinutes;
+const RESULT_RETRY_ATTEMPTS = config.resultRetryAttempts;
+const RESULT_RETRY_DELAY_SECONDS = config.resultRetryDelaySeconds;
+const WARNING_MINUTES = config.warningMinutes;
+const SUMMARY_HOUR = config.summaryHour;
+const RESCHEDULE_INTERVAL_MINUTES = config.rescheduleIntervalMinutes;
+const TELEGRAM_MESSAGE_CHUNK_SIZE = config.telegramMessageChunkSize;
 const TIMEZONE_LABEL = getTimezoneLabel();
 
 const getTargetDateInfo = (now = moment.tz(TARGET_TZ)) => {
@@ -62,6 +68,26 @@ const getEventsForDate = (events, targetDate) => events.filter((ev) => {
 
 const getTimedEvents = (events) => events.filter((ev) => parseTimeText(ev.dateStr, ev.timeText, ev.year));
 
+const normalizeFilterValue = (value) => String(value || '').trim().toUpperCase();
+
+const eventMatchesFilters = (ev, filters) => {
+  const currencies = filters.currencies.map(normalizeFilterValue);
+  const impacts = filters.impacts.map(normalizeFilterValue);
+
+  const currencyMatches = currencies.length === 0 || currencies.includes(normalizeFilterValue(ev.currency));
+  const impactMatches = impacts.length === 0 || impacts.includes(normalizeFilterValue(ev.impact));
+
+  return currencyMatches && impactMatches;
+};
+
+const filterEvents = (events, filters) => events.filter((ev) => eventMatchesFilters(ev, filters));
+
+const formatFilters = (filters) => {
+  const currencyText = filters.currencies.length > 0 ? filters.currencies.join(', ') : 'All';
+  const impactText = filters.impacts.length > 0 ? filters.impacts.join(', ') : 'All';
+  return `Currencies: ${currencyText}; Impacts: ${impactText}`;
+};
+
 const sendLongTelegramMessage = async (text, targetChatId) => {
   const lines = text.split('\n');
   let chunk = '';
@@ -93,7 +119,7 @@ const sendLongTelegramMessage = async (text, targetChatId) => {
   if (chunk) await sendTelegramMessage(chunk, targetChatId);
 };
 
-const buildEventsReport = (events, displayTitle, heading) => {
+const buildEventsReport = (events, displayTitle, heading, totalEventCount = events.length) => {
   let report = `${heading} <b>${displayTitle} (${TIMEZONE_LABEL}):</b>\n`;
   let lastPrintedTime = null;
 
@@ -118,6 +144,9 @@ const buildEventsReport = (events, displayTitle, heading) => {
   }
 
   report += `\n<b>Total events:</b> ${events.length}`;
+  if (totalEventCount !== events.length) {
+    report += ` of ${totalEventCount} available`;
+  }
   return report;
 };
 
@@ -157,10 +186,111 @@ const isSameEvent = (a, b) => (
   )
 );
 
+const getReleaseDedupeId = (ev) => `release:${ev.id || `${ev.currency}:${ev.eventName}:${ev.dateStr}:${ev.timeText}`}`;
+
+const getScheduledJobSummary = () => {
+  const jobs = Object.entries(schedule.scheduledJobs);
+  const managedJobs = jobs.filter(([jobName]) => managedScheduleJobNames.has(jobName));
+  const nextJobs = managedJobs
+    .map(([name, job]) => {
+      const nextInvocation = job.nextInvocation?.();
+      const nextDate = nextInvocation?.toDate ? nextInvocation.toDate() : nextInvocation;
+      return {
+        name,
+        nextRunAt: nextDate instanceof Date ? nextDate.toISOString() : null,
+      };
+    })
+    .filter((job) => job.nextRunAt)
+    .sort((a, b) => a.nextRunAt.localeCompare(b.nextRunAt))
+    .slice(0, 5);
+
+  return {
+    totalJobs: jobs.length,
+    managedJobs: managedJobs.length,
+    warningJobs: managedJobs.filter(([jobName]) => jobName.startsWith('warning-')).length,
+    resultJobs: managedJobs.filter(([jobName]) => jobName.startsWith('result-')).length,
+    nextJobs,
+  };
+};
+
+const getHealthPayload = () => {
+  const statusState = getStatusState();
+  const scheduledJobs = getScheduledJobSummary();
+
+  return {
+    status: 'ok',
+    startedAt: statusState.startedAt,
+    timezone: TARGET_TZ,
+    timezoneLabel: TIMEZONE_LABEL,
+    telegramMode: config.telegram.mode,
+    lastFetch: getLastFetch(),
+    lastScrape: statusState.lastScrape,
+    scrapeWarningCount: statusState.scrapeWarningCount,
+    lastScheduleRefresh: statusState.lastScheduleRefresh,
+    scheduledJobs,
+    filters: {
+      summary: config.summaryFilters,
+      alerts: config.alertFilters,
+    },
+  };
+};
+
+const buildStatusMessage = () => {
+  const health = getHealthPayload();
+  const lastScrape = health.lastScrape;
+  const nextJob = health.scheduledJobs.nextJobs[0];
+
+  return [
+    '<b>Bot Status</b>',
+    `Status: ${escapeHtml(health.status)}`,
+    `Mode: ${escapeHtml(health.telegramMode)}`,
+    `Timezone: ${escapeHtml(TARGET_TZ)} (${escapeHtml(TIMEZONE_LABEL)})`,
+    `Last fetch: ${escapeHtml(health.lastFetch || 'Never')}`,
+    `Last scrape rows: ${lastScrape ? `${lastScrape.capturedEventCount}/${lastScrape.expectedEventCount || lastScrape.capturedEventCount}` : 'None'}`,
+    `Scrape warnings: ${health.scrapeWarningCount}`,
+    `Scheduled jobs: ${health.scheduledJobs.managedJobs} managed (${health.scheduledJobs.warningJobs} warnings, ${health.scheduledJobs.resultJobs} results)`,
+    `Next job: ${nextJob ? `${escapeHtml(nextJob.name)} at ${escapeHtml(nextJob.nextRunAt)}` : 'None'}`,
+    `Summary filters: ${escapeHtml(formatFilters(config.summaryFilters))}`,
+    `Alert filters: ${escapeHtml(formatFilters(config.alertFilters))}`,
+  ].join('\n');
+};
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const hasValue = (value) => Boolean(value && String(value).trim());
+
+const shouldWaitForActual = (ev) => (
+  !hasValue(ev.actual) &&
+  (hasValue(ev.forecast) || hasValue(ev.previous))
+);
+
+const findFreshEvent = (freshEvents, oldEv) => (
+  freshEvents.find(f => isSameEvent(f, oldEv)) || oldEv
+);
+
+const fetchFreshResultEvents = async (dateQuery, groupEvents) => {
+  let resultEvents = groupEvents;
+
+  for (let attempt = 0; attempt <= RESULT_RETRY_ATTEMPTS; attempt += 1) {
+    const freshEvents = await fetchCalendar(dateQuery);
+    setLastFetch(new Date().toISOString());
+    resultEvents = groupEvents.map((oldEv) => findFreshEvent(freshEvents, oldEv));
+
+    const hasPendingActual = resultEvents.some(shouldWaitForActual);
+    if (!hasPendingActual || attempt === RESULT_RETRY_ATTEMPTS) {
+      return resultEvents;
+    }
+
+    await delay(RESULT_RETRY_DELAY_SECONDS * 1000);
+  }
+
+  return resultEvents;
+};
+
 const scheduleDailySummary = () => {
   const rule = new schedule.RecurrenceRule();
   rule.tz = TARGET_TZ;
-  rule.hour = SUMMARY_HOUR; 
+  rule.hour = SUMMARY_HOUR;
   rule.minute = 0;
   rule.second = 0;
 
@@ -168,12 +298,17 @@ const scheduleDailySummary = () => {
     const now = moment.tz(TARGET_TZ);
     const { targetDate, displayTitle, dateQuery } = getTargetDateInfo(now);
     const events = await fetchCalendar(dateQuery);
-    const targetEvents = getEventsForDate(events, targetDate);
+    setLastFetch(new Date().toISOString());
+    const allTargetEvents = getEventsForDate(events, targetDate);
+    const targetEvents = filterEvents(allTargetEvents, config.summaryFilters);
 
     if (targetEvents.length === 0) {
-      await sendTelegramMessage(`📅 <b>${displayTitle} (${TIMEZONE_LABEL}):</b>\nNo significant events found.`);
+      const emptyMessage = allTargetEvents.length === 0 ?
+        `📅 <b>${displayTitle} (${TIMEZONE_LABEL}):</b>\nNo significant events found.` :
+        `📅 <b>${displayTitle} (${TIMEZONE_LABEL}):</b>\nNo events matched summary filters.\n<b>Total available:</b> ${allTargetEvents.length}`;
+      await sendTelegramMessage(emptyMessage);
     } else {
-      await sendLongTelegramMessage(buildEventsReport(targetEvents, displayTitle, '🌅'));
+      await sendLongTelegramMessage(buildEventsReport(targetEvents, displayTitle, '🌅', allTargetEvents.length));
     }
   });
 };
@@ -194,23 +329,29 @@ const performSystemCheck = async (targetChatId) => {
   const now = moment.tz(TARGET_TZ);
   const { targetDate, displayTitle, dateQuery } = getTargetDateInfo(now);
   const events = await fetchCalendar(dateQuery);
-  const targetEvents = getEventsForDate(events, targetDate);
+  setLastFetch(new Date().toISOString());
+  const allTargetEvents = getEventsForDate(events, targetDate);
+  const targetEvents = filterEvents(allTargetEvents, config.summaryFilters);
 
   if (targetEvents.length === 0) {
-    await sendTelegramMessage(`No events found for ${displayTitle} (${TIMEZONE_LABEL}).`, targetChatId);
+    const emptyMessage = allTargetEvents.length === 0 ?
+      `No events found for ${displayTitle} (${TIMEZONE_LABEL}).` :
+      `No events matched summary filters for ${displayTitle} (${TIMEZONE_LABEL}). Total available: ${allTargetEvents.length}`;
+    await sendTelegramMessage(emptyMessage, targetChatId);
   } else {
-    await sendLongTelegramMessage(buildEventsReport(targetEvents, displayTitle, '📋'), targetChatId);
+    await sendLongTelegramMessage(buildEventsReport(targetEvents, displayTitle, '📋', allTargetEvents.length), targetChatId);
   }
 };
 
-const loadAndSchedule = async () => {  
+const loadAndSchedule = async () => {
   const now = moment.tz(TARGET_TZ);
   const dateQuery = now.format('MMMD.YYYY').toLowerCase();
 
   const events = await fetchCalendar(dateQuery);
+  setLastFetch(new Date().toISOString());
   if (!events || events.length === 0) return;
 
-  const targetEvents = getTimedEvents(getEventsForDate(events, now));
+  const targetEvents = filterEvents(getTimedEvents(getEventsForDate(events, now)), config.alertFilters);
 
   const eventsByTime = groupEventsByTime(targetEvents);
   const activeJobNames = new Set();
@@ -218,7 +359,7 @@ const loadAndSchedule = async () => {
   for (const [timeKey, groupEvents] of Object.entries(eventsByTime)) {
     const eventTime = moment(timeKey).tz(TARGET_TZ);
     const warningTime = eventTime.clone().subtract(WARNING_MINUTES, 'minutes');
-    
+
     if (warningTime.isAfter(now)) {
       const warningJobName = `warning-${timeKey}`;
       activeJobNames.add(warningJobName);
@@ -233,20 +374,29 @@ const loadAndSchedule = async () => {
     if (scrapeTime.isAfter(now)) {
       const jobName = `result-${timeKey}`;
       activeJobNames.add(jobName);
-      
+
       scheduleOrReplaceManagedJob(jobName, scrapeTime.toDate(), async () => {
         try {
-          const freshEvents = await fetchCalendar(dateQuery);
-          for (const oldEv of groupEvents) {
-            const freshEv = freshEvents.find(f => isSameEvent(f, oldEv));
-            const targetEv = freshEv || oldEv;
-            
+          const resultEvents = await fetchFreshResultEvents(dateQuery, groupEvents);
+
+          for (const targetEv of resultEvents) {
+            const dedupeId = getReleaseDedupeId(targetEv);
+
+            if (hasSent(dedupeId)) {
+              continue;
+            }
+
             let resultMsg = `✅ <b>News Released (${escapeHtml(formatEventTime(targetEv))}):</b>\n`;
             resultMsg += formatEventMessage(targetEv);
 
             const chartUrl = generateChartUrl(targetEv);
-            if (chartUrl) await sendTelegramPhoto(chartUrl, resultMsg);
-            else await sendTelegramMessage(resultMsg);
+            const sent = chartUrl ?
+              await sendTelegramPhoto(chartUrl, resultMsg) :
+              await sendTelegramMessage(resultMsg);
+
+            if (sent) {
+              markSent(dedupeId);
+            }
           }
         } catch (err) { console.error(err); }
       });
@@ -254,6 +404,11 @@ const loadAndSchedule = async () => {
   }
 
   cancelStaleManagedJobs(activeJobNames);
+  recordScheduleRefresh({
+    scheduledWarningJobs: [...activeJobNames].filter((jobName) => jobName.startsWith('warning-')).length,
+    scheduledResultJobs: [...activeJobNames].filter((jobName) => jobName.startsWith('result-')).length,
+    managedJobCount: managedScheduleJobNames.size,
+  });
 };
 
 let scheduleRefreshInProgress = false;
@@ -270,15 +425,24 @@ const refreshSchedule = async () => {
   }
 };
 
+app.get('/', (req, res) => res.json(getHealthPayload()));
+app.get('/health', (req, res) => res.json(getHealthPayload()));
+
+const server = app.listen(port, () => console.log(`Web server listening on port ${port}`));
+
 (async () => {
   const shutdown = () => {
-    bot.stopPolling();
+    if (config.telegram.polling) {
+      bot.stopPolling();
+    }
     schedule.gracefulShutdown();
+    server.close();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
+  await registerTelegramWebhook(app);
   scheduleDailySummary();
   await refreshSchedule();
 
@@ -297,8 +461,20 @@ const refreshSchedule = async () => {
   bot.on('message', async (msg) => {
     const text = msg.text ? msg.text.toLowerCase().trim() : '';
     const command = text.split(/\s+/)[0];
-    if (command === 'check' || command === '/check' || command.startsWith('/check@')) {
+    const isCheckCommand = command === 'check' || command === '/check' || command.startsWith('/check@');
+    const isStatusCommand = command === 'status' || command === '/status' || command.startsWith('/status@');
+
+    if (isCheckCommand || isStatusCommand) {
+      if (!isAllowedChatId(msg.chat.id)) {
+        console.warn(`Ignored command from unauthorized chat ${msg.chat.id}`);
+        return;
+      }
+    }
+
+    if (isCheckCommand) {
       await performSystemCheck(msg.chat.id);
+    } else if (isStatusCommand) {
+      await sendTelegramMessage(buildStatusMessage(), msg.chat.id);
     }
   });
 })();

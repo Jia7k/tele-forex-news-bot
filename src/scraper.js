@@ -1,8 +1,11 @@
 const cheerio = require('cheerio');
 require('dotenv').config({ quiet: true });
 
-const BASE = process.env.BASE_URL || 'https://www.forexfactory.com';
-const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
+const { config } = require('./config');
+const { recordScrape } = require('./status');
+
+const BASE = config.baseUrl;
+const TARGET_TZ = config.targetTz;
 
 const normalizeText = (text) => (text || '').replace(/\s+/g, ' ').trim();
 
@@ -118,10 +121,23 @@ const fetchCalendar = async (dateQuery = '') => {
     if (expectedEventCount && events.length !== expectedEventCount) {
       console.warn(`Forex Factory scraper captured ${events.length}/${expectedEventCount} event rows for ${url}`);
     }
+
+    recordScrape({
+      url,
+      expectedEventCount,
+      capturedEventCount: events.length,
+    });
     
     return events;
   } catch (error) {
     console.error('Error in scraper:', error.message);
+    recordScrape({
+      url,
+      expectedEventCount: 0,
+      capturedEventCount: 0,
+      ok: false,
+      error: error.message,
+    });
     return [];
   }
 };

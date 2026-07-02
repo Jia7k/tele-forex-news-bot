@@ -1,7 +1,9 @@
 const moment = require('moment-timezone');
 require('dotenv').config({ quiet: true });
 
-const TARGET_TZ = process.env.TARGET_TZ || 'Asia/Singapore';
+const { config } = require('./config');
+
+const TARGET_TZ = config.targetTz;
 const MONTHS = {
   jan: 'Jan',
   feb: 'Feb',
@@ -103,14 +105,57 @@ const formatEventMessage = (ev) => {
   const previous = (ev.previous && ev.previous.trim() !== '') ? escapeHtml(ev.previous) : '--';
   const currency = escapeHtml(ev.currency);
   const eventName = escapeHtml(ev.eventName);
+  const surprise = getSurpriseText(ev);
+  const previousPrefix = surprise ? '├' : '└';
+  const surpriseLine = surprise ? `\n└ ${surprise}` : '';
 
-  return `\n${impactIcon} <b>${currency} - ${eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n└ Prev: ${previous}\n`;
+  return `\n${impactIcon} <b>${currency} - ${eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n${previousPrefix} Prev: ${previous}${surpriseLine}\n`;
+};
+
+const parseMetricValue = (str) => {
+  if (!str || str.trim() === '' || str === '-' || str === '--') return null;
+
+  const match = String(str).replace(/,/g, '').match(/(-?\d+(?:\.\d+)?)\s*([KMBT%])?/i);
+  if (!match) return null;
+
+  const suffix = (match[2] || '').toUpperCase();
+  const multipliers = { K: 1e3, M: 1e6, B: 1e9, T: 1e12, '%': 1 };
+
+  return {
+    raw: parseFloat(match[1]),
+    suffix,
+    value: parseFloat(match[1]) * (multipliers[suffix] || 1),
+  };
 };
 
 const cleanNumber = (str) => {
-  if (!str || str.trim() === '' || str === '-' || str === '--') return null;
-  const match = str.match(/-?[\d.]+/);
-  return match ? parseFloat(match[0]) : null;
+  const metric = parseMetricValue(str);
+  return metric ? metric.value : null;
+};
+
+const formatDelta = (delta, suffix) => {
+  const sign = delta > 0 ? '+' : '';
+  const divisors = { K: 1e3, M: 1e6, B: 1e9, T: 1e12, '%': 1 };
+  const divisor = divisors[suffix] || 1;
+  const scaledDelta = delta / divisor;
+  const absDelta = Math.abs(scaledDelta);
+  const decimals = absDelta !== 0 && absDelta < 10 ? 2 : 1;
+  const rounded = Number(scaledDelta.toFixed(decimals));
+
+  return `${sign}${rounded}${suffix}`;
+};
+
+const getSurpriseText = (ev) => {
+  const actual = parseMetricValue(ev.actual);
+  const forecast = parseMetricValue(ev.forecast);
+
+  if (!actual || !forecast) return '';
+
+  const delta = actual.value - forecast.value;
+  const direction = delta > 0 ? 'Higher than forecast' : delta < 0 ? 'Lower than forecast' : 'In line with forecast';
+  const suffix = actual.suffix === forecast.suffix ? actual.suffix : '';
+
+  return `Surprise: ${escapeHtml(direction)} (${escapeHtml(formatDelta(delta, suffix))})`;
 };
 
 const generateChartUrl = (ev) => {
@@ -147,7 +192,9 @@ module.exports = {
   formatEventMessage,
   formatEventTime,
   generateChartUrl,
+  getSurpriseText,
   escapeHtml,
   getImpactIcon,
   getTimezoneLabel,
+  parseMetricValue,
 };

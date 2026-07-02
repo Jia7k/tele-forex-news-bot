@@ -3,7 +3,14 @@ process.env.TARGET_TZ = 'Asia/Singapore';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { formatEventMessage, formatEventTime, parseDateText, parseTimeText } = require('../src/utils');
+const {
+  formatEventMessage,
+  formatEventTime,
+  getSurpriseText,
+  parseDateText,
+  parseMetricValue,
+  parseTimeText,
+} = require('../src/utils');
 
 test('parseTimeText parses current Forex Factory date formats', () => {
   assert.equal(
@@ -59,4 +66,20 @@ test('formatEventMessage escapes Telegram HTML values', () => {
   assert.match(message, /USD - A &amp; B &lt;Test&gt;/);
   assert.match(message, /<b>1 &lt; 2<\/b>/);
   assert.match(message, /A&amp;B/);
+});
+
+test('parseMetricValue handles suffix multipliers', () => {
+  assert.equal(parseMetricValue('42K').value, 42000);
+  assert.equal(parseMetricValue('-1.5B').value, -1500000000);
+  assert.equal(parseMetricValue('0.4%').value, 0.4);
+});
+
+test('getSurpriseText compares actual and forecast', () => {
+  const surprise = getSurpriseText({
+    actual: '256K',
+    forecast: '180K',
+  });
+
+  assert.match(surprise, /Higher than forecast/);
+  assert.match(surprise, /\+76K/);
 });

@@ -1,74 +1,136 @@
-# Telegram Forex News Bot 📰💱
+# Telegram Forex News Bot
 
-![JavaScript](https://img.shields.io/badge/javascript-%23323330.svg?style=flat&logo=javascript&logoColor=%23F7DF1E)
-![NodeJS](https://img.shields.io/badge/node.js-6DA55F?style=flat&logo=node.js&logoColor=white)
+A Node.js Telegram bot that monitors the Forex Factory economic calendar and sends Singapore-time market event summaries, pre-release warnings, and post-release result updates.
 
-A Node.js Telegram bot that automatically scrapes economic news and events from Forex Factory and delivers them directly to your Telegram chat. Stay updated on market-moving events without having to constantly check the calendar!
+## Features
 
-## ✨ Features
+- Scrapes Forex Factory calendar events in `Asia/Singapore` by default.
+- Sends daily summaries with complete event counts.
+- Sends 10-minute pre-release warnings for timed events.
+- Updates released values 1 minute after release, with short retries if `Actual` is not populated yet.
+- Labels all event times in SGT.
+- Includes tentative events in summaries and `/check` reports.
+- Supports alert filters by currency and impact.
+- Detects actual-vs-forecast surprises where numeric values are available.
+- Provides `/status`, `/health`, and JSON runtime diagnostics.
+- Supports Telegram polling, webhook mode, and disabled mode for local smoke tests.
+- Persists sent release IDs to avoid duplicate result alerts across restarts.
 
-* **Automated Web Scraping:** Pulls the latest economic calendar events directly from Forex Factory.
-* **Instant Telegram Delivery:** Sends formatted news alerts directly to users via the Telegram Bot API.
-* **Data Parsing:** Neatly structures complex financial calendar data into an easily readable Telegram message.
-* **Automated Updates:** Keeps you informed of crucial economic events that could impact your trading strategy.
+## Requirements
 
-## 📂 Repository Structure
+- Node.js 20 or newer
+- A Telegram bot token from BotFather
+- A Telegram chat ID where alerts should be delivered
 
-```text
-tele-forex-news-bot/
-├── data/               # Local storage for scraped data and configurations
-├── src/                # Core bot logic, Telegram API integration, and scraping scripts
-├── .gitignore          # Ignored files and directories
-├── package.json        # Node.js project metadata and dependency lists
-└── package-lock.json   # Exact dependency versions
+## Quick Start
 
-## 🚀 Installation & Setup
+```bash
+git clone git@github.com:Jia7k/tele-forex-news-bot.git
+cd tele-forex-news-bot
+npm install
+cp .env.example .env
+```
 
-1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/Jia7k/tele-forex-news-bot.git](https://github.com/Jia7k/tele-forex-news-bot.git)
-   cd tele-forex-news-bot
-   ```
-
-2. **Install dependencies:**
-   Ensure you have [Node.js](https://nodejs.org/) installed, then run:
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment Variables:**
-   Create a `.env` file in the root directory and add your Telegram Bot Token (obtained from [@BotFather](https://t.me/botfather)):
-   ```env
-   TELEGRAM_BOT_TOKEN=your_bot_token_here
-   ```
-
-## 💻 Usage
-
-To start the bot, run the following command in your terminal:
+Edit `.env`, then start the bot:
 
 ```bash
 npm start
 ```
-*(Note: If you haven't defined a start script, run the main file directly, e.g., `node src/index.js` or `node src/bot.js`)*
 
-Once the script is running, open Telegram, find your bot, and start a chat to begin receiving Forex Factory news updates.
+For local smoke tests while another deployment is already polling the same Telegram token:
 
-## 🤝 Contributing
-
-Contributions, issues, and feature requests are welcome! 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/NewScraper`)
-3. Commit your Changes (`git commit -m 'Add a new scraping feature'`)
-4. Push to the Branch (`git push origin feature/NewScraper`)
-5. Open a Pull Request
-
-## 📝 License
-
-Distributed under the MIT License. See `LICENSE` for more information.
-
-## 📬 Contact
-
-**Jia7k** - [Email](jiarong112@gmail.com)
-
-
+```bash
+TELEGRAM_MODE=disabled npm start
 ```
+
+## Configuration
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Yes | | Telegram bot token. `TELEGRAM_TOKEN` is also supported. |
+| `TELEGRAM_CHAT_ID` | Yes | | Default chat for scheduled alerts. `CHAT_ID` is also supported. |
+| `TARGET_TZ` | No | `Asia/Singapore` | IANA timezone used for parsing, reports, and scheduling. |
+| `ALLOWED_CHAT_IDS` | No | `TELEGRAM_CHAT_ID` | Comma-separated chats allowed to run `/check` and `/status`. |
+| `TELEGRAM_MODE` | No | `polling` | `polling`, `webhook`, or `disabled`. |
+| `TELEGRAM_WEBHOOK_URL` | Webhook only | | Full public webhook URL. |
+| `TELEGRAM_WEBHOOK_PATH` | No | `/telegram/webhook` | Express route used for Telegram webhook updates. |
+| `TELEGRAM_WEBHOOK_SECRET` | No | | Secret token checked on webhook requests. |
+| `TELEGRAM_SEND_RETRY_ATTEMPTS` | No | `2` | Retries for failed Telegram sends. |
+| `TELEGRAM_SEND_RETRY_DELAY_SECONDS` | No | `2` | Delay between Telegram send retries. |
+| `SCRAPE_DELAY_MINUTES` | No | `1` | First result scrape after event release. |
+| `RESULT_RETRY_ATTEMPTS` | No | `2` | Retries if released values are still blank. |
+| `RESULT_RETRY_DELAY_SECONDS` | No | `30` | Delay between result retries. |
+| `WARNING_MINUTES` | No | `10` | Pre-release warning lead time. |
+| `SUMMARY_HOUR` | No | `6` | Daily summary hour in target timezone. |
+| `RESCHEDULE_INTERVAL_MINUTES` | No | `30` | How often the bot refreshes calendar schedules. |
+| `SUMMARY_CURRENCIES` | No | all | Optional comma-separated currencies for summary and `/check`. |
+| `SUMMARY_IMPACTS` | No | all | Optional comma-separated impacts for summary and `/check`. |
+| `ALERT_CURRENCIES` | No | all | Optional comma-separated currencies for warnings/results. |
+| `ALERT_IMPACTS` | No | all | Optional comma-separated impacts for warnings/results. |
+
+See [.env.example](.env.example) for a complete template.
+
+## Telegram Commands
+
+```text
+/check
+/status
+```
+
+`/check` sends the current day report. `/status` shows runtime diagnostics such as last scrape, scheduled jobs, filters, and Telegram mode.
+
+## Health Checks
+
+The bot exposes JSON status at:
+
+```text
+/
+/health
+```
+
+Example fields include `timezone`, `telegramMode`, `lastScrape`, `scrapeWarningCount`, `scheduledJobs`, and active filters.
+
+## Deployment Notes
+
+Use polling mode for a single long-running process. Telegram allows only one active poller per bot token; if another instance is already polling, Telegram returns a `409 Conflict`.
+
+For hosted deployments that expose HTTPS, webhook mode avoids polling conflicts:
+
+```env
+TELEGRAM_MODE=webhook
+TELEGRAM_WEBHOOK_URL=https://your-domain.example/telegram/webhook
+TELEGRAM_WEBHOOK_PATH=/telegram/webhook
+TELEGRAM_WEBHOOK_SECRET=replace_me
+```
+
+For local health checks without consuming Telegram updates:
+
+```env
+TELEGRAM_MODE=disabled
+```
+
+## Runtime Data
+
+Runtime state is stored in `data/store.json` by default. This file is intentionally ignored by Git because it contains mutable deployment state such as sent release IDs and last fetch time.
+
+Use [data/store.example.json](data/store.example.json) as the initial shape if you need to create the file manually.
+
+## Development
+
+Run tests and syntax checks:
+
+```bash
+npm test
+```
+
+Run syntax checks only:
+
+```bash
+npm run check
+```
+
+CI runs the same checks on pushes and pull requests through GitHub Actions.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

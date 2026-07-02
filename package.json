@@ -1,27 +1,42 @@
 {
-  "name": "telebot",
+  "name": "tele-forex-news-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Telegram bot for Forex Factory economic calendar alerts, Singapore-time summaries, and release updates.",
   "main": "src/index.js",
   "scripts": {
+    "check": "node --check src/config.js && node --check src/index.js && node --check src/scraper.js && node --check src/status.js && node --check src/store.js && node --check src/telegram.js && node --check src/utils.js",
     "start": "node src/index.js",
-    "test": "node --test"
+    "test": "npm run check && node --test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "telegram-bot",
+    "forex",
+    "economic-calendar",
+    "forex-factory",
+    "trading-alerts"
+  ],
+  "author": "Jia7k",
+  "license": "MIT",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/Jia7k/tele-forex-news-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jia7k/tele-forex-news-bot/issues"
+  },
+  "homepage": "https://github.com/Jia7k/tele-forex-news-bot#readme",
   "dependencies": {
-    "axios": "^1.13.2",
     "cheerio": "^1.1.2",
-    "cron": "^4.4.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "got-scraping": "^4.1.2",
     "lowdb": "^1.0.0",
     "moment-timezone": "^0.6.0",
     "node-schedule": "^2.1.1",
-    "node-telegram-bot-api": "^0.67.0",
-    "tz-offset": "^0.0.2"
+    "node-telegram-bot-api": "^0.67.0"
   }
 }
