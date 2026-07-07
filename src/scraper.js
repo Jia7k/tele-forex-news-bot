@@ -54,15 +54,28 @@ const fallbackEventId = ({ dateStr, timeText, currency, eventName }) => (
     .join('|')
 );
 
-const fetchCalendar = async (dateQuery = '') => {
+const getCalendarUrl = (dateQuery = '', options = {}) => {
+  let url = dateQuery ? `${BASE}/calendar?day=${dateQuery}` : `${BASE}/calendar`;
+
+  if (options.cacheBust) {
+    const separator = url.includes('?') ? '&' : '?';
+    url = `${url}${separator}_=${Date.now()}`;
+  }
+
+  return url;
+};
+
+const fetchCalendar = async (dateQuery = '', options = {}) => {
   const { gotScraping } = await import('got-scraping');
-  const url = dateQuery ? `${BASE}/calendar?day=${dateQuery}` : `${BASE}/calendar`;
+  const url = getCalendarUrl(dateQuery, options);
 
   try {
     const response = await gotScraping({
       url,
       headers: {
-        'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};` 
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};`,
       },
       headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'] },
       retry: { limit: 2, methods: ['GET'] },

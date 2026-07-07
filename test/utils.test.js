@@ -7,6 +7,7 @@ const {
   formatEventMessage,
   formatEventTime,
   getSurpriseText,
+  hasDataValue,
   parseDateText,
   parseMetricValue,
   parseTimeText,
@@ -68,10 +69,36 @@ test('formatEventMessage escapes Telegram HTML values', () => {
   assert.match(message, /A&amp;B/);
 });
 
+test('formatEventMessage treats placeholder actual values as missing', () => {
+  const message = formatEventMessage({
+    impact: 'Medium',
+    currency: 'CAD',
+    eventName: 'Trade Balance',
+    actual: '--',
+    forecast: '2.8B',
+    previous: '2.7B',
+  });
+
+  assert.match(message, /├ Act: --/);
+  assert.doesNotMatch(message, /<b>--<\/b>/);
+});
+
+test('hasDataValue rejects common calendar placeholders', () => {
+  assert.equal(hasDataValue(''), false);
+  assert.equal(hasDataValue('-'), false);
+  assert.equal(hasDataValue('--'), false);
+  assert.equal(hasDataValue('—'), false);
+  assert.equal(hasDataValue('–'), false);
+  assert.equal(hasDataValue('N/A'), false);
+  assert.equal(hasDataValue('-78.3B'), true);
+  assert.equal(hasDataValue('0.0%'), true);
+});
+
 test('parseMetricValue handles suffix multipliers', () => {
   assert.equal(parseMetricValue('42K').value, 42000);
   assert.equal(parseMetricValue('-1.5B').value, -1500000000);
   assert.equal(parseMetricValue('0.4%').value, 0.4);
+  assert.equal(parseMetricValue('—'), null);
 });
 
 test('getSurpriseText compares actual and forecast', () => {

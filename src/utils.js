@@ -29,6 +29,13 @@ const TIME_FORMATS = [
 const normalizeText = (text) => (text || '').replace(/\s+/g, ' ').trim();
 const getTimezoneLabel = () => (TARGET_TZ === 'Asia/Singapore' ? 'SGT' : TARGET_TZ);
 
+const PLACEHOLDER_VALUES = new Set(['', '-', '--', '—', '–', 'n/a', 'na']);
+
+const hasDataValue = (value) => {
+  const normalized = normalizeText(value).toLowerCase();
+  return !PLACEHOLDER_VALUES.has(normalized);
+};
+
 const extractDatePart = (dateStr) => {
   const cleanDate = normalizeText(dateStr)
     .replace(/([A-Za-z])(\d)/g, '$1 $2')
@@ -100,9 +107,9 @@ const getImpactIcon = (impact) => {
 const formatEventMessage = (ev) => {
   const impactIcon = getImpactIcon(ev.impact);
 
-  const actual = (ev.actual && ev.actual.trim() !== '') ? `<b>${escapeHtml(ev.actual)}</b>` : '--';
-  const forecast = (ev.forecast && ev.forecast.trim() !== '') ? escapeHtml(ev.forecast) : '--';
-  const previous = (ev.previous && ev.previous.trim() !== '') ? escapeHtml(ev.previous) : '--';
+  const actual = hasDataValue(ev.actual) ? `<b>${escapeHtml(ev.actual)}</b>` : '--';
+  const forecast = hasDataValue(ev.forecast) ? escapeHtml(ev.forecast) : '--';
+  const previous = hasDataValue(ev.previous) ? escapeHtml(ev.previous) : '--';
   const currency = escapeHtml(ev.currency);
   const eventName = escapeHtml(ev.eventName);
   const surprise = getSurpriseText(ev);
@@ -113,7 +120,7 @@ const formatEventMessage = (ev) => {
 };
 
 const parseMetricValue = (str) => {
-  if (!str || str.trim() === '' || str === '-' || str === '--') return null;
+  if (!hasDataValue(str)) return null;
 
   const match = String(str).replace(/,/g, '').match(/(-?\d+(?:\.\d+)?)\s*([KMBT%])?/i);
   if (!match) return null;
@@ -196,5 +203,6 @@ module.exports = {
   escapeHtml,
   getImpactIcon,
   getTimezoneLabel,
+  hasDataValue,
   parseMetricValue,
 };

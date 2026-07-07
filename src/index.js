@@ -15,6 +15,7 @@ const {
   escapeHtml,
   getImpactIcon,
   getTimezoneLabel,
+  hasDataValue,
 } = require('./utils');
 const { getLastFetch, hasSent, markSent, setLastFetch } = require('./store');
 const { getStatusState, recordScheduleRefresh } = require('./status');
@@ -127,9 +128,9 @@ const buildEventsReport = (events, displayTitle, heading, totalEventCount = even
     const icon = getImpactIcon(ev.impact);
     const displayTime = formatEventTime(ev);
     const eventTitle = `<b>${escapeHtml(ev.currency)} - ${escapeHtml(ev.eventName)}</b>`;
-    const actual = ev.actual ? escapeHtml(ev.actual) : '--';
-    const forecast = ev.forecast ? escapeHtml(ev.forecast) : '--';
-    const previous = ev.previous ? escapeHtml(ev.previous) : '--';
+    const actual = hasDataValue(ev.actual) ? escapeHtml(ev.actual) : '--';
+    const forecast = hasDataValue(ev.forecast) ? escapeHtml(ev.forecast) : '--';
+    const previous = hasDataValue(ev.previous) ? escapeHtml(ev.previous) : '--';
 
     if (displayTime !== lastPrintedTime) {
       report += `${lastPrintedTime === null ? '\n' : '\n\n'}<b>${escapeHtml(displayTime)}</b> ${icon} ${eventTitle}\n`;
@@ -257,11 +258,9 @@ const buildStatusMessage = () => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const hasValue = (value) => Boolean(value && String(value).trim());
-
 const shouldWaitForActual = (ev) => (
-  !hasValue(ev.actual) &&
-  (hasValue(ev.forecast) || hasValue(ev.previous))
+  !hasDataValue(ev.actual) &&
+  (hasDataValue(ev.forecast) || hasDataValue(ev.previous))
 );
 
 const findFreshEvent = (freshEvents, oldEv) => (
@@ -270,21 +269,30 @@ const findFreshEvent = (freshEvents, oldEv) => (
 
 const fetchFreshResultEvents = async (dateQuery, groupEvents) => {
   let resultEvents = groupEvents;
+  let pendingEvents = [];
 
   for (let attempt = 0; attempt <= RESULT_RETRY_ATTEMPTS; attempt += 1) {
-    const freshEvents = await fetchCalendar(dateQuery);
+    const freshEvents = await fetchCalendar(dateQuery, { cacheBust: true });
     setLastFetch(new Date().toISOString());
     resultEvents = groupEvents.map((oldEv) => findFreshEvent(freshEvents, oldEv));
 
-    const hasPendingActual = resultEvents.some(shouldWaitForActual);
-    if (!hasPendingActual || attempt === RESULT_RETRY_ATTEMPTS) {
-      return resultEvents;
+    pendingEvents = resultEvents.filter(shouldWaitForActual);
+    if (pendingEvents.length === 0 || attempt === RESULT_RETRY_ATTEMPTS) {
+      return {
+        events: resultEvents,
+        pendingEvents,
+        attempts: attempt,
+      };
     }
 
     await delay(RESULT_RETRY_DELAY_SECONDS * 1000);
   }
 
-  return resultEvents;
+  return {
+    events: resultEvents,
+    pendingEvents,
+    attempts: RESULT_RETRY_ATTEMPTS,
+  };
 };
 
 const scheduleDailySummary = () => {
@@ -377,9 +385,24 @@ const loadAndSchedule = async () => {
 
       scheduleOrReplaceManagedJob(jobName, scrapeTime.toDate(), async () => {
         try {
-          const resultEvents = await fetchFreshResultEvents(dateQuery, groupEvents);
+          const {
+            events: resultEvents,
+            pendingEvents,
+            attempts,
+          } = await fetchFreshResultEvents(dateQuery, groupEvents);
+
+          if (pendingEvents.length > 0) {
+            console.warn(
+              `Actual value still pending after ${attempts + 1} scrape(s): ` +
+              pendingEvents.map((ev) => `${ev.currency} ${ev.eventName}`).join(', ')
+            );
+          }
 
           for (const targetEv of resultEvents) {
+            if (shouldWaitForActual(targetEv)) {
+              continue;
+            }
+
             const dedupeId = getReleaseDedupeId(targetEv);
 
             if (hasSent(dedupeId)) {
