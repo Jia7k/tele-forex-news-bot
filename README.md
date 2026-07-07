@@ -7,7 +7,8 @@ A Node.js Telegram bot that monitors the Forex Factory economic calendar and sen
 - Scrapes Forex Factory calendar events in `Asia/Singapore` by default.
 - Sends daily summaries with complete event counts.
 - Sends 10-minute pre-release warnings for timed events.
-- Updates released values 1 minute after release, then keeps retrying if `Actual` is still a placeholder.
+- Updates released values 2 minutes after release, then keeps retrying if `Actual` is still a placeholder.
+- Sends release updates only for rows where Forex Factory has populated an actual value.
 - Keeps same-time release groups together, so statement-only rows do not get sent while a related numeric value is still pending.
 - Labels all event times in SGT.
 - Includes tentative events in summaries and `/check` reports.
@@ -58,7 +59,7 @@ TELEGRAM_MODE=disabled npm start
 | `TELEGRAM_WEBHOOK_SECRET` | No | | Secret token checked on webhook requests. |
 | `TELEGRAM_SEND_RETRY_ATTEMPTS` | No | `2` | Retries for failed Telegram sends. |
 | `TELEGRAM_SEND_RETRY_DELAY_SECONDS` | No | `2` | Delay between Telegram send retries. |
-| `SCRAPE_DELAY_MINUTES` | No | `1` | First result scrape after event release. |
+| `SCRAPE_DELAY_MINUTES` | No | `2` | First result scrape after event release. |
 | `RESULT_RETRY_ATTEMPTS` | No | `60` | Retries if released values are still blank. Runtime uses at least `60` attempts even if this is configured lower. |
 | `RESULT_RETRY_DELAY_SECONDS` | No | `30` | Delay between result retries. |
 | `WARNING_MINUTES` | No | `10` | Pre-release warning lead time. |

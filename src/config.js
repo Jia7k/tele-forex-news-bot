@@ -61,7 +61,7 @@ const config = {
   baseUrl: process.env.BASE_URL || 'https://www.forexfactory.com',
   port: parseInteger('PORT', 3000, { min: 1, max: 65535 }),
   targetTz,
-  scrapeDelayMinutes: parseInteger('SCRAPE_DELAY_MINUTES', 1, { min: 0 }),
+  scrapeDelayMinutes: parseInteger('SCRAPE_DELAY_MINUTES', 2, { min: 0 }),
   resultRetryAttempts: parseInteger('RESULT_RETRY_ATTEMPTS', 60, { min: 0 }),
   resultRetryDelaySeconds: parseInteger('RESULT_RETRY_DELAY_SECONDS', 30, { min: 1 }),
   warningMinutes: parseInteger('WARNING_MINUTES', 10, { min: 0 }),

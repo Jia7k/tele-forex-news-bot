@@ -41,6 +41,8 @@ const shouldWaitForActualValue = (ev) => (
   (hasDataValue(ev.forecast) || hasDataValue(ev.previous))
 );
 
+const shouldSendReleaseUpdate = (ev) => hasDataValue(ev.actual);
+
 const extractDatePart = (dateStr) => {
   const cleanDate = normalizeText(dateStr)
     .replace(/([A-Za-z])(\d)/g, '$1 $2')
@@ -211,4 +213,5 @@ module.exports = {
   hasDataValue,
   parseMetricValue,
   shouldWaitForActualValue,
+  shouldSendReleaseUpdate,
 };

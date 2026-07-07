@@ -11,6 +11,7 @@ const {
   parseDateText,
   parseMetricValue,
   parseTimeText,
+  shouldSendReleaseUpdate,
   shouldWaitForActualValue,
 } = require('../src/utils');
 
@@ -110,6 +111,26 @@ test('shouldWaitForActualValue waits only for value-bearing events', () => {
 
   assert.equal(shouldWaitForActualValue({
     actual: '2.25%',
+    forecast: '2.50%',
+    previous: '2.25%',
+  }), false);
+});
+
+test('shouldSendReleaseUpdate only sends rows with actual values', () => {
+  assert.equal(shouldSendReleaseUpdate({
+    actual: '2.25%',
+    forecast: '2.50%',
+    previous: '2.25%',
+  }), true);
+
+  assert.equal(shouldSendReleaseUpdate({
+    actual: '',
+    forecast: '',
+    previous: '',
+  }), false);
+
+  assert.equal(shouldSendReleaseUpdate({
+    actual: '--',
     forecast: '2.50%',
     previous: '2.25%',
   }), false);

@@ -16,6 +16,7 @@ const {
   getImpactIcon,
   getTimezoneLabel,
   hasDataValue,
+  shouldSendReleaseUpdate,
   shouldWaitForActualValue,
 } = require('./utils');
 const { getLastFetch, hasSent, markSent, setLastFetch } = require('./store');
@@ -447,7 +448,16 @@ const loadAndSchedule = async () => {
             return;
           }
 
-          for (const targetEv of resultEvents) {
+          const releaseEvents = resultEvents.filter(shouldSendReleaseUpdate);
+
+          if (releaseEvents.length === 0) {
+            console.warn(
+              `No release rows with actual values after ${attempts + 1} scrape cycle(s) across ${dateQueries.join(', ')}`
+            );
+            return;
+          }
+
+          for (const targetEv of releaseEvents) {
             const dedupeId = getReleaseDedupeId(targetEv);
 
             if (hasSent(dedupeId)) {
