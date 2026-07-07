@@ -36,6 +36,11 @@ const hasDataValue = (value) => {
   return !PLACEHOLDER_VALUES.has(normalized);
 };
 
+const shouldWaitForActualValue = (ev) => (
+  !hasDataValue(ev.actual) &&
+  (hasDataValue(ev.forecast) || hasDataValue(ev.previous))
+);
+
 const extractDatePart = (dateStr) => {
   const cleanDate = normalizeText(dateStr)
     .replace(/([A-Za-z])(\d)/g, '$1 $2')
@@ -205,4 +210,5 @@ module.exports = {
   getTimezoneLabel,
   hasDataValue,
   parseMetricValue,
+  shouldWaitForActualValue,
 };

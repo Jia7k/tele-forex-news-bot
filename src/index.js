@@ -16,6 +16,7 @@ const {
   getImpactIcon,
   getTimezoneLabel,
   hasDataValue,
+  shouldWaitForActualValue,
 } = require('./utils');
 const { getLastFetch, hasSent, markSent, setLastFetch } = require('./store');
 const { getStatusState, recordScheduleRefresh } = require('./status');
@@ -29,7 +30,8 @@ app.use(express.json());
 
 const TARGET_TZ = config.targetTz;
 const SCRAPE_DELAY_MINUTES = config.scrapeDelayMinutes;
-const RESULT_RETRY_ATTEMPTS = config.resultRetryAttempts;
+const MIN_RESULT_RETRY_ATTEMPTS = 60;
+const RESULT_RETRY_ATTEMPTS = Math.max(config.resultRetryAttempts, MIN_RESULT_RETRY_ATTEMPTS);
 const RESULT_RETRY_DELAY_SECONDS = config.resultRetryDelaySeconds;
 const WARNING_MINUTES = config.warningMinutes;
 const SUMMARY_HOUR = config.summaryHour;
@@ -258,30 +260,74 @@ const buildStatusMessage = () => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const shouldWaitForActual = (ev) => (
-  !hasDataValue(ev.actual) &&
-  (hasDataValue(ev.forecast) || hasDataValue(ev.previous))
-);
-
 const findFreshEvent = (freshEvents, oldEv) => (
   freshEvents.find(f => isSameEvent(f, oldEv)) || oldEv
 );
 
+const getDateQueryVariants = (dateQuery, groupEvents) => {
+  const queries = new Set([dateQuery]);
+  const addMomentWithNeighbors = (dateMoment) => {
+    if (!dateMoment || !dateMoment.isValid()) return;
+
+    [-1, 0, 1].forEach((days) => {
+      queries.add(dateMoment.clone().add(days, 'days').format('MMMD.YYYY').toLowerCase());
+    });
+  };
+
+  const dateQueryMatch = String(dateQuery || '').match(/^([a-z]{3})(\d{1,2})\.(\d{4})$/i);
+  if (dateQueryMatch) {
+    addMomentWithNeighbors(moment.tz(
+      `${dateQueryMatch[1]} ${dateQueryMatch[2]} ${dateQueryMatch[3]}`,
+      'MMM D YYYY',
+      true,
+      TARGET_TZ
+    ));
+  }
+
+  groupEvents.forEach((ev) => {
+    const eventDate = getEventDate(ev);
+    if (eventDate) addMomentWithNeighbors(eventDate);
+  });
+
+  return [...queries];
+};
+
+const getDedupeKey = (ev) => ev.id || `${ev.currency}:${ev.eventName}:${ev.dateStr}:${ev.timeText}`;
+
+const fetchFreshEventsAcrossDates = async (dateQueries) => {
+  const seenEvents = new Set();
+  const freshEvents = [];
+
+  for (const query of dateQueries) {
+    const events = await fetchCalendar(query, { cacheBust: true });
+    for (const ev of events) {
+      const key = getDedupeKey(ev);
+      if (seenEvents.has(key)) continue;
+      seenEvents.add(key);
+      freshEvents.push(ev);
+    }
+  }
+
+  setLastFetch(new Date().toISOString());
+  return freshEvents;
+};
+
 const fetchFreshResultEvents = async (dateQuery, groupEvents) => {
+  const dateQueries = getDateQueryVariants(dateQuery, groupEvents);
   let resultEvents = groupEvents;
   let pendingEvents = [];
 
   for (let attempt = 0; attempt <= RESULT_RETRY_ATTEMPTS; attempt += 1) {
-    const freshEvents = await fetchCalendar(dateQuery, { cacheBust: true });
-    setLastFetch(new Date().toISOString());
+    const freshEvents = await fetchFreshEventsAcrossDates(dateQueries);
     resultEvents = groupEvents.map((oldEv) => findFreshEvent(freshEvents, oldEv));
 
-    pendingEvents = resultEvents.filter(shouldWaitForActual);
+    pendingEvents = resultEvents.filter(shouldWaitForActualValue);
     if (pendingEvents.length === 0 || attempt === RESULT_RETRY_ATTEMPTS) {
       return {
         events: resultEvents,
         pendingEvents,
         attempts: attempt,
+        dateQueries,
       };
     }
 
@@ -292,6 +338,7 @@ const fetchFreshResultEvents = async (dateQuery, groupEvents) => {
     events: resultEvents,
     pendingEvents,
     attempts: RESULT_RETRY_ATTEMPTS,
+    dateQueries,
   };
 };
 
@@ -389,20 +436,18 @@ const loadAndSchedule = async () => {
             events: resultEvents,
             pendingEvents,
             attempts,
+            dateQueries,
           } = await fetchFreshResultEvents(dateQuery, groupEvents);
 
           if (pendingEvents.length > 0) {
             console.warn(
-              `Actual value still pending after ${attempts + 1} scrape(s): ` +
+              `Actual value still pending after ${attempts + 1} scrape cycle(s) across ${dateQueries.join(', ')}: ` +
               pendingEvents.map((ev) => `${ev.currency} ${ev.eventName}`).join(', ')
             );
+            return;
           }
 
           for (const targetEv of resultEvents) {
-            if (shouldWaitForActual(targetEv)) {
-              continue;
-            }
-
             const dedupeId = getReleaseDedupeId(targetEv);
 
             if (hasSent(dedupeId)) {

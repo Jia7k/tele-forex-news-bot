@@ -11,6 +11,7 @@ const {
   parseDateText,
   parseMetricValue,
   parseTimeText,
+  shouldWaitForActualValue,
 } = require('../src/utils');
 
 test('parseTimeText parses current Forex Factory date formats', () => {
@@ -92,6 +93,26 @@ test('hasDataValue rejects common calendar placeholders', () => {
   assert.equal(hasDataValue('N/A'), false);
   assert.equal(hasDataValue('-78.3B'), true);
   assert.equal(hasDataValue('0.0%'), true);
+});
+
+test('shouldWaitForActualValue waits only for value-bearing events', () => {
+  assert.equal(shouldWaitForActualValue({
+    actual: '--',
+    forecast: '2.50%',
+    previous: '2.25%',
+  }), true);
+
+  assert.equal(shouldWaitForActualValue({
+    actual: '',
+    forecast: '',
+    previous: '',
+  }), false);
+
+  assert.equal(shouldWaitForActualValue({
+    actual: '2.25%',
+    forecast: '2.50%',
+    previous: '2.25%',
+  }), false);
 });
 
 test('parseMetricValue handles suffix multipliers', () => {
