@@ -1,11 +1,29 @@
+const normalizeValue = (value) => (
+  value === null || value === undefined ? '' : String(value)
+);
+
 const startedAt = new Date().toISOString();
 
 const state = {
   startedAt,
   lastScrape: null,
+  lastReleaseCheck: null,
+  lastFallbackLookup: null,
   lastScheduleRefresh: null,
+  pendingResults: {},
   scrapeWarningCount: 0,
 };
+
+const summarizeEvent = (ev) => ({
+  id: ev.id || null,
+  currency: ev.currency || '',
+  eventName: ev.eventName || '',
+  timeText: ev.timeText || '',
+  dateStr: ev.dateStr || '',
+  actual: normalizeValue(ev.actual),
+  forecast: normalizeValue(ev.forecast),
+  previous: normalizeValue(ev.previous),
+});
 
 const recordScrape = ({ url, expectedEventCount, capturedEventCount, ok = true, error = null }) => {
   const mismatch = ok && expectedEventCount > 0 && capturedEventCount !== expectedEventCount;
@@ -34,6 +52,78 @@ const recordScheduleRefresh = ({ scheduledWarningJobs, scheduledResultJobs, mana
   };
 };
 
-const getStatusState = () => ({ ...state });
+const recordReleaseCheck = ({
+  groupKey,
+  timeLabel,
+  attempt,
+  dateQueries,
+  pendingEvents,
+  sentEvents,
+  nextRetryAt = null,
+}) => {
+  state.lastReleaseCheck = {
+    at: new Date().toISOString(),
+    groupKey,
+    timeLabel,
+    attempt,
+    dateQueries,
+    pendingEvents: pendingEvents.map(summarizeEvent),
+    sentEvents: sentEvents.map(summarizeEvent),
+    nextRetryAt,
+  };
+};
 
-module.exports = { getStatusState, recordScrape, recordScheduleRefresh };
+const recordPendingResults = ({
+  groupKey,
+  timeLabel,
+  attempt,
+  dateQueries,
+  pendingEvents,
+  nextRetryAt = null,
+}) => {
+  state.pendingResults[groupKey] = {
+    updatedAt: new Date().toISOString(),
+    groupKey,
+    timeLabel,
+    attempt,
+    dateQueries,
+    pendingEvents: pendingEvents.map(summarizeEvent),
+    nextRetryAt,
+  };
+};
+
+const clearPendingResults = (groupKey) => {
+  delete state.pendingResults[groupKey];
+};
+
+const recordFallbackLookup = ({
+  provider,
+  ok,
+  fetchedCount = 0,
+  matchedCount = 0,
+  error = null,
+}) => {
+  state.lastFallbackLookup = {
+    at: new Date().toISOString(),
+    provider,
+    ok,
+    fetchedCount,
+    matchedCount,
+    error: error ? String(error) : null,
+  };
+};
+
+const getStatusState = () => ({
+  ...state,
+  pendingResults: { ...state.pendingResults },
+});
+
+module.exports = {
+  clearPendingResults,
+  getStatusState,
+  recordFallbackLookup,
+  recordPendingResults,
+  recordReleaseCheck,
+  recordScrape,
+  recordScheduleRefresh,
+};

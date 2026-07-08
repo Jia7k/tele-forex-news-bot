@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseBoolean, parseChatIds, parseList, parseTelegramMode } = require('../src/config');
+const {
+  parseBoolean,
+  parseChatIds,
+  parseFallbackProvider,
+  parseList,
+  parseTelegramMode,
+} = require('../src/config');
 
 test('parseChatIds trims comma-separated chat ids', () => {
   assert.deepEqual(parseChatIds('123, -456,789 ,'), ['123', '-456', '789']);
@@ -41,4 +47,20 @@ test('parseTelegramMode supports mode and polling compatibility flags', () => {
 
   if (oldPolling === undefined) delete process.env.TELEGRAM_POLLING;
   else process.env.TELEGRAM_POLLING = oldPolling;
+});
+
+test('parseFallbackProvider supports disabled and tradingeconomics modes', () => {
+  const oldProvider = process.env.FALLBACK_PROVIDER;
+
+  delete process.env.FALLBACK_PROVIDER;
+  assert.equal(parseFallbackProvider(), 'none');
+
+  process.env.FALLBACK_PROVIDER = 'tradingeconomics';
+  assert.equal(parseFallbackProvider(), 'tradingeconomics');
+
+  process.env.FALLBACK_PROVIDER = 'invalid';
+  assert.throws(() => parseFallbackProvider(), /FALLBACK_PROVIDER/);
+
+  if (oldProvider === undefined) delete process.env.FALLBACK_PROVIDER;
+  else process.env.FALLBACK_PROVIDER = oldProvider;
 });

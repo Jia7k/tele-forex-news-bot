@@ -95,6 +95,7 @@ test('hasDataValue rejects common calendar placeholders', () => {
   assert.equal(hasDataValue('N/A'), false);
   assert.equal(hasDataValue('-78.3B'), true);
   assert.equal(hasDataValue('0.0%'), true);
+  assert.equal(hasDataValue(0), true);
 });
 
 test('shouldWaitForActualValue waits only for value-bearing events', () => {

@@ -51,6 +51,13 @@ const parseTelegramMode = () => {
   return parseBoolean('TELEGRAM_POLLING', true) ? 'polling' : 'disabled';
 };
 
+const parseFallbackProvider = () => {
+  const provider = String(process.env.FALLBACK_PROVIDER || 'none').toLowerCase().trim();
+  if (['none', 'tradingeconomics'].includes(provider)) return provider;
+
+  throw new Error('FALLBACK_PROVIDER must be none or tradingeconomics');
+};
+
 const token = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || '';
 const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID || '';
 const targetTz = process.env.TARGET_TZ || 'Asia/Singapore';
@@ -64,10 +71,17 @@ const config = {
   scrapeDelayMinutes: parseInteger('SCRAPE_DELAY_MINUTES', 2, { min: 0 }),
   resultRetryAttempts: parseInteger('RESULT_RETRY_ATTEMPTS', 60, { min: 0 }),
   resultRetryDelaySeconds: parseInteger('RESULT_RETRY_DELAY_SECONDS', 30, { min: 1 }),
+  releaseCatchupMinutes: parseInteger('RELEASE_CATCHUP_MINUTES', 60, { min: 0 }),
   warningMinutes: parseInteger('WARNING_MINUTES', 10, { min: 0 }),
   summaryHour: parseInteger('SUMMARY_HOUR', 6, { min: 0, max: 23 }),
   rescheduleIntervalMinutes: parseInteger('RESCHEDULE_INTERVAL_MINUTES', 30, { min: 0 }),
+  sentEventTtlDays: parseInteger('SENT_EVENT_TTL_DAYS', 14, { min: 1 }),
   telegramMessageChunkSize: parseInteger('TELEGRAM_MESSAGE_CHUNK_SIZE', 3800, { min: 1000, max: 4096 }),
+  fallback: {
+    provider: parseFallbackProvider(),
+    tradingEconomicsApiKey: process.env.TRADING_ECONOMICS_API_KEY || '',
+    matchWindowMinutes: parseInteger('FALLBACK_MATCH_WINDOW_MINUTES', 180, { min: 1 }),
+  },
   summaryFilters: {
     currencies: parseList(process.env.SUMMARY_CURRENCIES || ''),
     impacts: parseList(process.env.SUMMARY_IMPACTS || ''),
@@ -114,6 +128,10 @@ const validateConfig = () => {
   if (config.telegram.mode === 'webhook' && !config.telegram.webhookUrl) {
     throw new Error('TELEGRAM_WEBHOOK_URL is required when TELEGRAM_MODE=webhook');
   }
+
+  if (config.fallback.provider === 'tradingeconomics' && !config.fallback.tradingEconomicsApiKey) {
+    throw new Error('TRADING_ECONOMICS_API_KEY is required when FALLBACK_PROVIDER=tradingeconomics');
+  }
 };
 
 const isAllowedChatId = (chatIdToCheck) => (
@@ -126,6 +144,7 @@ module.exports = {
   isAllowedChatId,
   parseBoolean,
   parseChatIds,
+  parseFallbackProvider,
   parseList,
   parseTelegramMode,
 };

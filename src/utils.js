@@ -26,7 +26,9 @@ const TIME_FORMATS = [
   'YYYY MMM D HH:mm',
 ];
 
-const normalizeText = (text) => (text || '').replace(/\s+/g, ' ').trim();
+const normalizeText = (text) => (
+  text === null || text === undefined ? '' : String(text)
+).replace(/\s+/g, ' ').trim();
 const getTimezoneLabel = () => (TARGET_TZ === 'Asia/Singapore' ? 'SGT' : TARGET_TZ);
 
 const PLACEHOLDER_VALUES = new Set(['', '-', '--', '—', '–', 'n/a', 'na']);

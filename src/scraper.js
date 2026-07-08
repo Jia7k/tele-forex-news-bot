@@ -7,7 +7,9 @@ const { recordScrape } = require('./status');
 const BASE = config.baseUrl;
 const TARGET_TZ = config.targetTz;
 
-const normalizeText = (text) => (text || '').replace(/\s+/g, ' ').trim();
+const normalizeText = (text) => (
+  text === null || text === undefined ? '' : String(text)
+).replace(/\s+/g, ' ').trim();
 
 const getYearFromDateQuery = (dateQuery) => {
   const match = String(dateQuery || '').match(/\.(\d{4})$/);
@@ -65,6 +67,58 @@ const getCalendarUrl = (dateQuery = '', options = {}) => {
   return url;
 };
 
+const parseCalendarHtml = (html, dateQuery = '') => {
+  const $ = cheerio.load(html);
+  const events = [];
+  const expectedEventCount = $('tr.calendar__row[data-event-id], tr.calendar__row[data-eventid]').length;
+
+  const currentYear = getYearFromDateQuery(dateQuery);
+  let currentDateStr = "";
+  let lastTimeText = "";
+
+  $('tr.calendar__row').each((i, el) => {
+    const row = $(el);
+    const dateText = getDateText(row);
+
+    if (dateText) {
+      currentDateStr = dateText;
+      lastTimeText = "";
+    }
+
+    if (!currentDateStr) return;
+
+    let timeText = normalizeText(row.find('.calendar__time, .time').first().text());
+    if (timeText && timeText !== '') {
+      lastTimeText = timeText;
+    } else if (lastTimeText !== '') {
+      timeText = lastTimeText;
+    } else {
+      return;
+    }
+
+    const currency = normalizeText(row.find('.calendar__currency').text());
+    const eventName = normalizeText(row.find('.calendar__event-title').first().text()) ||
+      normalizeText(row.find('.calendar__event').text());
+    if (!currency || !eventName) return;
+
+    const impactClass = row.find('.calendar__impact span').attr('class') || '';
+    const id = row.attr('data-eventid') ||
+      row.attr('data-event-id') ||
+      fallbackEventId({ dateStr: currentDateStr, timeText, currency, eventName });
+
+    events.push({
+      id, dateStr: currentDateStr, year: currentYear, timeText, currency,
+      impact: getImpact(impactClass),
+      eventName,
+      actual: normalizeText(row.find('.calendar__actual').text()),
+      forecast: normalizeText(row.find('.calendar__forecast').text()),
+      previous: normalizeText(row.find('.calendar__previous').text()),
+    });
+  });
+
+  return { events, expectedEventCount };
+};
+
 const fetchCalendar = async (dateQuery = '', options = {}) => {
   const { gotScraping } = await import('got-scraping');
   const url = getCalendarUrl(dateQuery, options);
@@ -82,54 +136,7 @@ const fetchCalendar = async (dateQuery = '', options = {}) => {
       timeout: { request: 30000 },
     });
 
-    const html = response.body;
-    const $ = cheerio.load(html);
-    const events = [];
-    const expectedEventCount = $('tr.calendar__row[data-event-id], tr.calendar__row[data-eventid]').length;
-    
-    const currentYear = getYearFromDateQuery(dateQuery);
-    let currentDateStr = ""; 
-    let lastTimeText = ""; 
-
-    $('tr.calendar__row').each((i, el) => {
-      const row = $(el);
-      const dateText = getDateText(row);
-      
-      if (dateText) {
-        currentDateStr = dateText;
-        lastTimeText = ""; 
-      }
-
-      if (!currentDateStr) return;
-
-      let timeText = normalizeText(row.find('.calendar__time, .time').first().text());
-      if (timeText && timeText !== '') {
-        lastTimeText = timeText;
-      } else if (lastTimeText !== '') {
-        timeText = lastTimeText;
-      } else {
-        return; 
-      }
-
-      const currency = normalizeText(row.find('.calendar__currency').text());
-      const eventName = normalizeText(row.find('.calendar__event-title').first().text()) ||
-        normalizeText(row.find('.calendar__event').text());
-      if (!currency || !eventName) return;
-
-      const impactClass = row.find('.calendar__impact span').attr('class') || '';
-      const id = row.attr('data-eventid') ||
-        row.attr('data-event-id') ||
-        fallbackEventId({ dateStr: currentDateStr, timeText, currency, eventName });
-
-      events.push({
-        id, dateStr: currentDateStr, year: currentYear, timeText, currency,
-        impact: getImpact(impactClass),
-        eventName,
-        actual: normalizeText(row.find('.calendar__actual').text()),
-        forecast: normalizeText(row.find('.calendar__forecast').text()),
-        previous: normalizeText(row.find('.calendar__previous').text()),
-      });
-    });
+    const { events, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
 
     if (expectedEventCount && events.length !== expectedEventCount) {
       console.warn(`Forex Factory scraper captured ${events.length}/${expectedEventCount} event rows for ${url}`);
@@ -155,4 +162,4 @@ const fetchCalendar = async (dateQuery = '', options = {}) => {
   }
 };
 
-module.exports = { fetchCalendar };
+module.exports = { fetchCalendar, parseCalendarHtml };
