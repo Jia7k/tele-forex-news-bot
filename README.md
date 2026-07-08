@@ -59,7 +59,7 @@ TELEGRAM_MODE=disabled npm start
 | `TELEGRAM_WEBHOOK_SECRET` | No | | Secret token checked on webhook requests. |
 | `TELEGRAM_SEND_RETRY_ATTEMPTS` | No | `2` | Retries for failed Telegram sends. |
 | `TELEGRAM_SEND_RETRY_DELAY_SECONDS` | No | `2` | Delay between Telegram send retries. |
-| `SCRAPE_DELAY_MINUTES` | No | `2` | First result scrape after event release. |
+| `SCRAPE_DELAY_MINUTES` | No | `2` | First result scrape after event release. Runtime uses at least `2` minutes even if this is configured lower. |
 | `RESULT_RETRY_ATTEMPTS` | No | `60` | Retries if released values are still blank. Runtime uses at least `60` attempts even if this is configured lower. |
 | `RESULT_RETRY_DELAY_SECONDS` | No | `30` | Delay between result retries. |
 | `WARNING_MINUTES` | No | `10` | Pre-release warning lead time. |

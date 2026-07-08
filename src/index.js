@@ -13,6 +13,7 @@ const {
   formatEventTime,
   generateChartUrl,
   escapeHtml,
+  getReleaseDedupeId,
   getImpactIcon,
   getTimezoneLabel,
   hasDataValue,
@@ -30,7 +31,8 @@ const port = config.port;
 app.use(express.json());
 
 const TARGET_TZ = config.targetTz;
-const SCRAPE_DELAY_MINUTES = config.scrapeDelayMinutes;
+const MIN_SCRAPE_DELAY_MINUTES = 2;
+const SCRAPE_DELAY_MINUTES = Math.max(config.scrapeDelayMinutes, MIN_SCRAPE_DELAY_MINUTES);
 const MIN_RESULT_RETRY_ATTEMPTS = 60;
 const RESULT_RETRY_ATTEMPTS = Math.max(config.resultRetryAttempts, MIN_RESULT_RETRY_ATTEMPTS);
 const RESULT_RETRY_DELAY_SECONDS = config.resultRetryDelaySeconds;
@@ -190,8 +192,6 @@ const isSameEvent = (a, b) => (
   )
 );
 
-const getReleaseDedupeId = (ev) => `release:${ev.id || `${ev.currency}:${ev.eventName}:${ev.dateStr}:${ev.timeText}`}`;
-
 const getScheduledJobSummary = () => {
   const jobs = Object.entries(schedule.scheduledJobs);
   const managedJobs = jobs.filter(([jobName]) => managedScheduleJobNames.has(jobName));
@@ -313,33 +313,13 @@ const fetchFreshEventsAcrossDates = async (dateQueries) => {
   return freshEvents;
 };
 
-const fetchFreshResultEvents = async (dateQuery, groupEvents) => {
-  const dateQueries = getDateQueryVariants(dateQuery, groupEvents);
-  let resultEvents = groupEvents;
-  let pendingEvents = [];
-
-  for (let attempt = 0; attempt <= RESULT_RETRY_ATTEMPTS; attempt += 1) {
-    const freshEvents = await fetchFreshEventsAcrossDates(dateQueries);
-    resultEvents = groupEvents.map((oldEv) => findFreshEvent(freshEvents, oldEv));
-
-    pendingEvents = resultEvents.filter(shouldWaitForActualValue);
-    if (pendingEvents.length === 0 || attempt === RESULT_RETRY_ATTEMPTS) {
-      return {
-        events: resultEvents,
-        pendingEvents,
-        attempts: attempt,
-        dateQueries,
-      };
-    }
-
-    await delay(RESULT_RETRY_DELAY_SECONDS * 1000);
-  }
+const fetchFreshResultEvents = async (dateQueries, groupEvents) => {
+  const freshEvents = await fetchFreshEventsAcrossDates(dateQueries);
+  const resultEvents = groupEvents.map((oldEv) => findFreshEvent(freshEvents, oldEv));
 
   return {
     events: resultEvents,
-    pendingEvents,
-    attempts: RESULT_RETRY_ATTEMPTS,
-    dateQueries,
+    pendingEvents: resultEvents.filter(shouldWaitForActualValue),
   };
 };
 
@@ -433,48 +413,59 @@ const loadAndSchedule = async () => {
 
       scheduleOrReplaceManagedJob(jobName, scrapeTime.toDate(), async () => {
         try {
-          const {
-            events: resultEvents,
-            pendingEvents,
-            attempts,
-            dateQueries,
-          } = await fetchFreshResultEvents(dateQuery, groupEvents);
+          const dateQueries = getDateQueryVariants(dateQuery, groupEvents);
+          let pendingEvents = groupEvents.filter(shouldWaitForActualValue);
+          let sentCount = 0;
 
-          if (pendingEvents.length > 0) {
-            console.warn(
-              `Actual value still pending after ${attempts + 1} scrape cycle(s) across ${dateQueries.join(', ')}: ` +
-              pendingEvents.map((ev) => `${ev.currency} ${ev.eventName}`).join(', ')
-            );
-            return;
-          }
+          for (let attempt = 0; attempt <= RESULT_RETRY_ATTEMPTS; attempt += 1) {
+            const {
+              events: resultEvents,
+              pendingEvents: nextPendingEvents,
+            } = await fetchFreshResultEvents(dateQueries, groupEvents);
 
-          const releaseEvents = resultEvents.filter(shouldSendReleaseUpdate);
+            const releaseEvents = resultEvents.filter(shouldSendReleaseUpdate);
 
-          if (releaseEvents.length === 0) {
-            console.warn(
-              `No release rows with actual values after ${attempts + 1} scrape cycle(s) across ${dateQueries.join(', ')}`
-            );
-            return;
-          }
+            for (const targetEv of releaseEvents) {
+              const dedupeId = getReleaseDedupeId(targetEv);
 
-          for (const targetEv of releaseEvents) {
-            const dedupeId = getReleaseDedupeId(targetEv);
+              if (hasSent(dedupeId)) {
+                continue;
+              }
 
-            if (hasSent(dedupeId)) {
-              continue;
+              let resultMsg = `✅ <b>News Released (${escapeHtml(formatEventTime(targetEv))}):</b>\n`;
+              resultMsg += formatEventMessage(targetEv);
+
+              const chartUrl = generateChartUrl(targetEv);
+              const sent = chartUrl ?
+                await sendTelegramPhoto(chartUrl, resultMsg) :
+                await sendTelegramMessage(resultMsg);
+
+              if (sent) {
+                markSent(dedupeId);
+                sentCount += 1;
+              }
             }
 
-            let resultMsg = `✅ <b>News Released (${escapeHtml(formatEventTime(targetEv))}):</b>\n`;
-            resultMsg += formatEventMessage(targetEv);
+            pendingEvents = nextPendingEvents;
 
-            const chartUrl = generateChartUrl(targetEv);
-            const sent = chartUrl ?
-              await sendTelegramPhoto(chartUrl, resultMsg) :
-              await sendTelegramMessage(resultMsg);
-
-            if (sent) {
-              markSent(dedupeId);
+            if (pendingEvents.length === 0) {
+              return;
             }
+
+            if (attempt === RESULT_RETRY_ATTEMPTS) {
+              console.warn(
+                `Actual value still pending after ${attempt + 1} scrape cycle(s) across ${dateQueries.join(', ')}: ` +
+                pendingEvents.map((ev) => `${ev.currency} ${ev.eventName}`).join(', ')
+              );
+              if (sentCount === 0) {
+                console.warn(
+                  `No release rows with actual values after ${attempt + 1} scrape cycle(s) across ${dateQueries.join(', ')}`
+                );
+              }
+              return;
+            }
+
+            await delay(RESULT_RETRY_DELAY_SECONDS * 1000);
           }
         } catch (err) { console.error(err); }
       });

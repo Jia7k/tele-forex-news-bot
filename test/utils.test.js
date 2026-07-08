@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   formatEventMessage,
   formatEventTime,
+  getReleaseDedupeId,
   getSurpriseText,
   hasDataValue,
   parseDateText,
@@ -134,6 +135,30 @@ test('shouldSendReleaseUpdate only sends rows with actual values', () => {
     forecast: '2.50%',
     previous: '2.25%',
   }), false);
+});
+
+test('getReleaseDedupeId includes actual value', () => {
+  const baseEvent = {
+    id: '148862',
+    currency: 'NZD',
+    eventName: 'Official Cash Rate',
+    dateStr: 'Wed Jul 8',
+    timeText: '10:00am',
+    actual: '2.25%',
+  };
+
+  assert.equal(
+    getReleaseDedupeId(baseEvent),
+    'release:148862:actual:2.25%'
+  );
+  assert.equal(
+    getReleaseDedupeId({ ...baseEvent, actual: '2.50%' }),
+    'release:148862:actual:2.50%'
+  );
+  assert.notEqual(
+    getReleaseDedupeId(baseEvent),
+    'release:148862'
+  );
 });
 
 test('parseMetricValue handles suffix multipliers', () => {

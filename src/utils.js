@@ -43,6 +43,16 @@ const shouldWaitForActualValue = (ev) => (
 
 const shouldSendReleaseUpdate = (ev) => hasDataValue(ev.actual);
 
+const getReleaseDedupeId = (ev) => {
+  const eventId = ev.id || [ev.currency, ev.eventName, ev.dateStr, ev.timeText]
+    .map(normalizeText)
+    .filter(Boolean)
+    .join(':');
+  const actual = hasDataValue(ev.actual) ? normalizeText(ev.actual) : 'pending';
+
+  return `release:${eventId}:actual:${actual}`;
+};
+
 const extractDatePart = (dateStr) => {
   const cleanDate = normalizeText(dateStr)
     .replace(/([A-Za-z])(\d)/g, '$1 $2')
@@ -212,6 +222,7 @@ module.exports = {
   getTimezoneLabel,
   hasDataValue,
   parseMetricValue,
+  getReleaseDedupeId,
   shouldWaitForActualValue,
   shouldSendReleaseUpdate,
 };
