@@ -543,12 +543,14 @@ const loadAndSchedule = async () => {
 
             const releaseEvents = resultEvents.filter(shouldSendReleaseUpdate);
             const unsentReleaseEvents = releaseEvents.filter((targetEv) => !hasSent(getReleaseDedupeId(targetEv)));
+            const deliveredReleaseEvents = [];
 
             if (unsentReleaseEvents.length > 0) {
               const sent = await sendReleaseGroupMessage(unsentReleaseEvents);
               if (sent) {
                 unsentReleaseEvents.forEach((targetEv) => markSent(getReleaseDedupeId(targetEv)));
                 sentCount += unsentReleaseEvents.length;
+                deliveredReleaseEvents.push(...unsentReleaseEvents);
               }
             }
 
@@ -563,7 +565,7 @@ const loadAndSchedule = async () => {
               attempt,
               dateQueries,
               pendingEvents,
-              sentEvents: unsentReleaseEvents,
+              sentEvents: deliveredReleaseEvents,
               nextRetryAt,
             });
 

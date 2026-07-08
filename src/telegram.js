@@ -25,6 +25,13 @@ bot.on('polling_error', (error) => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const shouldSkipTelegramSend = (label) => {
+  if (config.telegram.mode !== 'disabled') return false;
+
+  console.log(`${label} skipped because TELEGRAM_MODE=disabled`);
+  return true;
+};
+
 const sendWithRetries = async (label, operation) => {
   for (let attempt = 0; attempt <= config.telegram.sendRetryAttempts; attempt += 1) {
     try {
@@ -44,6 +51,8 @@ const sendWithRetries = async (label, operation) => {
 };
 
 const sendTelegramMessage = async (text, targetChatId = config.telegram.chatId) => {
+  if (shouldSkipTelegramSend('Telegram Send')) return false;
+
   const recipient = targetChatId ?? config.telegram.chatId;
   if (!recipient) {
     console.error('CHAT_ID missing in .env');
@@ -55,6 +64,8 @@ const sendTelegramMessage = async (text, targetChatId = config.telegram.chatId) 
 };
 
 const sendTelegramPhoto = async (photoUrl, captionText, targetChatId = config.telegram.chatId) => {
+  if (shouldSkipTelegramSend('Telegram Photo Send')) return false;
+
   const recipient = targetChatId ?? config.telegram.chatId;
   if (!recipient) {
     console.error('CHAT_ID missing in .env');
