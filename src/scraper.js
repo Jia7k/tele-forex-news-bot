@@ -67,9 +67,38 @@ const getCalendarUrl = (dateQuery = '', options = {}) => {
   return url;
 };
 
+const decodeJsonString = (value) => {
+  try {
+    return JSON.parse(`"${value}"`);
+  } catch {
+    return value;
+  }
+};
+
+const extractEmbeddedEventData = (html) => {
+  const eventsById = new Map();
+  const eventPattern = /\{(?=[^{}]*"id"\s*:\s*\d+)[^{}]*"id"\s*:\s*(\d+)[^{}]*"dateline"\s*:\s*(\d+)[^{}]*\}/g;
+  let match;
+
+  while ((match = eventPattern.exec(html)) !== null) {
+    const objectText = match[0];
+    const timeLabelMatch = objectText.match(/"timeLabel"\s*:\s*"((?:\\.|[^"])*)"/);
+    const dateMatch = objectText.match(/"date"\s*:\s*"((?:\\.|[^"])*)"/);
+
+    eventsById.set(match[1], {
+      timestamp: Number(match[2]),
+      timeLabel: timeLabelMatch ? decodeJsonString(timeLabelMatch[1]) : '',
+      date: dateMatch ? decodeJsonString(dateMatch[1]) : '',
+    });
+  }
+
+  return eventsById;
+};
+
 const parseCalendarHtml = (html, dateQuery = '') => {
   const $ = cheerio.load(html);
   const events = [];
+  const embeddedEvents = extractEmbeddedEventData(html);
   const expectedEventCount = $('tr.calendar__row[data-event-id], tr.calendar__row[data-eventid]').length;
 
   const currentYear = getYearFromDateQuery(dateQuery);
@@ -105,15 +134,27 @@ const parseCalendarHtml = (html, dateQuery = '') => {
     const id = row.attr('data-eventid') ||
       row.attr('data-event-id') ||
       fallbackEventId({ dateStr: currentDateStr, timeText, currency, eventName });
+    const embeddedEvent = embeddedEvents.get(String(id));
+    const timestamp = Number(embeddedEvent?.timestamp);
 
-    events.push({
-      id, dateStr: currentDateStr, year: currentYear, timeText, currency,
+    const event = {
+      id,
+      dateStr: embeddedEvent?.date || currentDateStr,
+      year: currentYear,
+      timeText: embeddedEvent?.timeLabel || timeText,
+      currency,
       impact: getImpact(impactClass),
       eventName,
       actual: normalizeText(row.find('.calendar__actual').text()),
       forecast: normalizeText(row.find('.calendar__forecast').text()),
       previous: normalizeText(row.find('.calendar__previous').text()),
-    });
+    };
+
+    if (Number.isFinite(timestamp) && timestamp > 0) {
+      event.timestamp = timestamp;
+    }
+
+    events.push(event);
   });
 
   return { events, expectedEventCount };

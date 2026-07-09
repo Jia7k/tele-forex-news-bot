@@ -53,6 +53,15 @@ test('formatEventTime labels output in Singapore time', () => {
     '8:30pm SGT'
   );
   assert.equal(
+    formatEventTime({
+      dateStr: 'Thu Jul 9',
+      timeText: '7:50pm',
+      year: 2026,
+      timestamp: 1783641000,
+    }),
+    '7:50am SGT'
+  );
+  assert.equal(
     formatEventTime({ dateStr: 'Thu Jul 2', timeText: 'Tentative', year: 2026 }),
     'Tentative'
   );

@@ -82,6 +82,12 @@ const getTargetDateInfo = (now = moment.tz(TARGET_TZ)) => {
 };
 
 const getEventDate = (ev) => {
+  const timestamp = Number(ev.timestamp);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    const milliseconds = timestamp > 100000000000 ? timestamp : timestamp * 1000;
+    return moment(milliseconds).tz(TARGET_TZ);
+  }
+
   const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year) ||
     parseDateText(ev.dateStr, ev.year);
   return dateObj ? moment(dateObj).tz(TARGET_TZ) : null;
@@ -92,7 +98,21 @@ const getEventsForDate = (events, targetDate) => events.filter((ev) => {
   return eventDate ? eventDate.isSame(targetDate, 'day') : false;
 });
 
-const getTimedEvents = (events) => events.filter((ev) => parseTimeText(ev.dateStr, ev.timeText, ev.year));
+const getTimedEventDate = (ev) => {
+  const cleanTime = String(ev.timeText || '').toLowerCase().trim();
+  if (!cleanTime || cleanTime.includes('tentative')) return null;
+
+  const timestamp = Number(ev.timestamp);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    const milliseconds = timestamp > 100000000000 ? timestamp : timestamp * 1000;
+    return moment(milliseconds).tz(TARGET_TZ);
+  }
+
+  const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
+  return dateObj ? moment(dateObj).tz(TARGET_TZ) : null;
+};
+
+const getTimedEvents = (events) => events.filter(getTimedEventDate);
 
 const normalizeFilterValue = (value) => String(value || '').trim().toUpperCase();
 
@@ -448,9 +468,9 @@ const scheduleDailySummary = () => {
 const groupEventsByTime = (events) => {
   const groups = {};
   events.forEach(ev => {
-    const dateObj = parseTimeText(ev.dateStr, ev.timeText, ev.year);
-    if (!dateObj) return;
-    const key = dateObj.toISOString();
+    const eventDate = getTimedEventDate(ev);
+    if (!eventDate) return;
+    const key = eventDate.toDate().toISOString();
     if (!groups[key]) groups[key] = [];
     groups[key].push(ev);
   });

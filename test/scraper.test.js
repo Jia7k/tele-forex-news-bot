@@ -54,3 +54,31 @@ test('parseCalendarHtml extracts Forex Factory event rows', () => {
   assert.equal(events[1].eventName, 'RBNZ Rate Statement');
   assert.equal(events[1].actual, '');
 });
+
+test('parseCalendarHtml captures embedded Forex Factory dateline by event id', () => {
+  const html = `
+    <script>
+      window.calendarEvents = [{"id":149940,"name":"PPI y/y","dateline":1783641000,"timeLabel":"7:50am","date":"Jul 10, 2026"}];
+    </script>
+    <table>
+      <tr class="calendar__row calendar__row--day-breaker">
+        <td class="calendar__cell">Thu Jul 9</td>
+      </tr>
+      <tr class="calendar__row" data-event-id="149940">
+        <td class="calendar__cell calendar__time">7:50pm</td>
+        <td class="calendar__cell calendar__currency">JPY</td>
+        <td class="calendar__cell calendar__impact"><span class="icon icon--ff-impact-yel"></span></td>
+        <td class="calendar__cell calendar__event">
+          <span class="calendar__event-title">PPI y/y</span>
+        </td>
+        <td class="calendar__cell calendar__actual"></td>
+        <td class="calendar__cell calendar__forecast"><span>6.8%</span></td>
+        <td class="calendar__cell calendar__previous"><span>6.3%</span></td>
+      </tr>
+    </table>
+  `;
+
+  const { events } = parseCalendarHtml(html, 'jul9.2026');
+
+  assert.equal(events[0].timestamp, 1783641000);
+});

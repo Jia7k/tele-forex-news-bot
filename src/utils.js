@@ -107,6 +107,17 @@ const parseTimeText = (dateStr, timeText, year) => {
   return m.toDate();
 };
 
+const getTimestampMoment = (ev) => {
+  const timestamp = Number(ev.timestamp);
+
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+
+  const milliseconds = timestamp > 100000000000 ? timestamp : timestamp * 1000;
+  const m = moment(milliseconds).tz(TARGET_TZ);
+
+  return m.isValid() ? m : null;
+};
+
 const formatEventTime = (ev) => {
   const cleanTime = normalizeText(ev.timeText).toLowerCase();
   const timezoneLabel = getTimezoneLabel();
@@ -114,6 +125,9 @@ const formatEventTime = (ev) => {
   if (!cleanTime) return `Unscheduled (${timezoneLabel})`;
   if (cleanTime.includes('tentative')) return 'Tentative';
   if (cleanTime.includes('day')) return `All Day (${timezoneLabel})`;
+
+  const timestampMoment = getTimestampMoment(ev);
+  if (timestampMoment) return `${timestampMoment.format('h:mma')} ${timezoneLabel}`;
 
   const parsedTime = parseTimeText(ev.dateStr, ev.timeText, ev.year);
   if (!parsedTime) return `${normalizeText(ev.timeText)} ${timezoneLabel}`;
