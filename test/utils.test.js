@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   formatEventMessage,
   formatEventTime,
+  getReleaseUpdateEvents,
   getReleaseDedupeId,
   getSurpriseText,
   hasDataValue,
@@ -136,6 +137,45 @@ test('shouldSendReleaseUpdate only sends rows with actual values', () => {
     forecast: '2.50%',
     previous: '2.25%',
   }), false);
+});
+
+test('getReleaseUpdateEvents includes statement rows after value-bearing releases are ready', () => {
+  const rateDecision = {
+    currency: 'NZD',
+    eventName: 'Official Cash Rate',
+    actual: '2.25%',
+    forecast: '2.50%',
+    previous: '2.25%',
+  };
+  const rateStatement = {
+    currency: 'NZD',
+    eventName: 'RBNZ Rate Statement',
+    actual: '',
+    forecast: '',
+    previous: '',
+  };
+  const pendingInflation = {
+    currency: 'NZD',
+    eventName: 'Inflation Expectations q/q',
+    actual: '--',
+    forecast: '2.1%',
+    previous: '2.0%',
+  };
+
+  assert.deepEqual(
+    getReleaseUpdateEvents([rateDecision, rateStatement, pendingInflation], [pendingInflation]),
+    [rateDecision]
+  );
+
+  assert.deepEqual(
+    getReleaseUpdateEvents([rateDecision, rateStatement], []),
+    [rateDecision, rateStatement]
+  );
+
+  assert.deepEqual(
+    getReleaseUpdateEvents([rateStatement], []),
+    []
+  );
 });
 
 test('getReleaseDedupeId includes actual value', () => {

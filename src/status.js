@@ -10,6 +10,10 @@ const state = {
   lastReleaseCheck: null,
   lastFallbackLookup: null,
   lastScheduleRefresh: null,
+  telegram: {
+    pollingConflict: false,
+    lastPollingError: null,
+  },
   pendingResults: {},
   scrapeWarningCount: 0,
 };
@@ -50,6 +54,29 @@ const recordScheduleRefresh = ({ scheduledWarningJobs, scheduledResultJobs, mana
     scheduledResultJobs,
     managedJobCount,
   };
+};
+
+const isPollingConflict = ({ code, statusCode, description }) => (
+  Number(statusCode) === 409 ||
+  String(description || '').includes('409') ||
+  (
+    code === 'ETELEGRAM' &&
+    /conflict/i.test(String(description || '')) &&
+    /getUpdates|bot instance|poll/i.test(String(description || ''))
+  )
+);
+
+const recordTelegramPollingError = ({ code = '', statusCode = null, description = '' }) => {
+  state.telegram.lastPollingError = {
+    at: new Date().toISOString(),
+    code: normalizeValue(code),
+    statusCode,
+    description: normalizeValue(description),
+  };
+
+  if (isPollingConflict({ code, statusCode, description })) {
+    state.telegram.pollingConflict = true;
+  }
 };
 
 const recordReleaseCheck = ({
@@ -126,4 +153,5 @@ module.exports = {
   recordReleaseCheck,
   recordScrape,
   recordScheduleRefresh,
+  recordTelegramPollingError,
 };

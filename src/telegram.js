@@ -2,6 +2,7 @@ require('dotenv').config({ quiet: true });
 const TelegramBot = require('node-telegram-bot-api');
 
 const { config } = require('./config');
+const { recordTelegramPollingError } = require('./status');
 
 const bot = new TelegramBot(config.telegram.token, {
   polling: config.telegram.polling,
@@ -14,8 +15,22 @@ const bot = new TelegramBot(config.telegram.token, {
 
 bot.on('polling_error', (error) => {
   const description = error.response?.body?.description || error.message || String(error);
+  const statusCode = error.response?.statusCode || error.response?.body?.error_code || null;
+  const isConflict = Number(statusCode) === 409 ||
+    description.includes('409') ||
+    (
+      error.code === 'ETELEGRAM' &&
+      /conflict/i.test(description) &&
+      /getUpdates|bot instance|poll/i.test(description)
+    );
 
-  if (error.code === 'ETELEGRAM' && description.includes('409')) {
+  recordTelegramPollingError({
+    code: error.code,
+    statusCode,
+    description,
+  });
+
+  if (isConflict) {
     console.error('Telegram polling conflict: another bot instance is already running with this token.');
     return;
   }

@@ -14,10 +14,10 @@ const {
   formatEventTime,
   escapeHtml,
   getReleaseDedupeId,
+  getReleaseUpdateEvents,
   getImpactIcon,
   getTimezoneLabel,
   hasDataValue,
-  shouldSendReleaseUpdate,
   shouldWaitForActualValue,
 } = require('./utils');
 const {
@@ -243,11 +243,17 @@ const getHealthPayload = () => {
   const scheduledJobs = getScheduledJobSummary();
 
   return {
-    status: 'ok',
+    status: statusState.telegram?.pollingConflict ? 'degraded' : 'ok',
     startedAt: statusState.startedAt,
     timezone: TARGET_TZ,
     timezoneLabel: TIMEZONE_LABEL,
     telegramMode: config.telegram.mode,
+    telegram: {
+      mode: config.telegram.mode,
+      polling: config.telegram.polling,
+      pollingConflict: Boolean(statusState.telegram?.pollingConflict),
+      lastPollingError: statusState.telegram?.lastPollingError || null,
+    },
     lastFetch: getLastFetch(),
     lastScrape: statusState.lastScrape,
     lastReleaseCheck: statusState.lastReleaseCheck,
@@ -281,11 +287,13 @@ const buildStatusMessage = () => {
   const health = getHealthPayload();
   const lastScrape = health.lastScrape;
   const nextJob = health.scheduledJobs.nextJobs[0];
+  const lastPollingError = health.telegram.lastPollingError;
 
   return [
     '<b>Bot Status</b>',
     `Status: ${escapeHtml(health.status)}`,
-    `Mode: ${escapeHtml(health.telegramMode)}`,
+    `Mode: ${escapeHtml(health.telegramMode)}${health.telegram.pollingConflict ? ' (polling conflict)' : ''}`,
+    `Last polling error: ${lastPollingError ? `${escapeHtml(lastPollingError.description)} at ${escapeHtml(lastPollingError.at)}` : 'None'}`,
     `Timezone: ${escapeHtml(TARGET_TZ)} (${escapeHtml(TIMEZONE_LABEL)})`,
     `Last fetch: ${escapeHtml(health.lastFetch || 'Never')}`,
     `Last scrape rows: ${lastScrape ? `${lastScrape.capturedEventCount}/${lastScrape.expectedEventCount || lastScrape.capturedEventCount}` : 'None'}`,
@@ -541,7 +549,7 @@ const loadAndSchedule = async () => {
               pendingEvents: nextPendingEvents,
             } = await fetchFreshResultEvents(dateQueries, groupEvents);
 
-            const releaseEvents = resultEvents.filter(shouldSendReleaseUpdate);
+            const releaseEvents = getReleaseUpdateEvents(resultEvents, nextPendingEvents);
             const unsentReleaseEvents = releaseEvents.filter((targetEv) => !hasSent(getReleaseDedupeId(targetEv)));
             const deliveredReleaseEvents = [];
 

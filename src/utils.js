@@ -45,6 +45,16 @@ const shouldWaitForActualValue = (ev) => (
 
 const shouldSendReleaseUpdate = (ev) => hasDataValue(ev.actual);
 
+const getReleaseUpdateEvents = (events, pendingEvents = []) => {
+  const actualEvents = events.filter(shouldSendReleaseUpdate);
+
+  if (pendingEvents.length > 0 || actualEvents.length === 0) {
+    return actualEvents;
+  }
+
+  return events.filter((ev) => shouldSendReleaseUpdate(ev) || !shouldWaitForActualValue(ev));
+};
+
 const getReleaseDedupeId = (ev) => {
   const eventId = ev.id || [ev.currency, ev.eventName, ev.dateStr, ev.timeText]
     .map(normalizeText)
@@ -225,6 +235,7 @@ module.exports = {
   hasDataValue,
   parseMetricValue,
   getReleaseDedupeId,
+  getReleaseUpdateEvents,
   shouldWaitForActualValue,
   shouldSendReleaseUpdate,
 };
