@@ -6,6 +6,7 @@ const {
   parseChatIds,
   parseFallbackProvider,
   parseList,
+  parseScrapeDelaySeconds,
   parseTelegramMode,
 } = require('../src/config');
 
@@ -63,4 +64,20 @@ test('parseFallbackProvider supports disabled and tradingeconomics modes', () =>
 
   if (oldProvider === undefined) delete process.env.FALLBACK_PROVIDER;
   else process.env.FALLBACK_PROVIDER = oldProvider;
+});
+
+test('parseScrapeDelaySeconds defaults to an early first result scrape', () => {
+  const oldDelay = process.env.SCRAPE_DELAY_SECONDS;
+
+  delete process.env.SCRAPE_DELAY_SECONDS;
+  assert.equal(parseScrapeDelaySeconds(), 5);
+
+  process.env.SCRAPE_DELAY_SECONDS = '8';
+  assert.equal(parseScrapeDelaySeconds(), 8);
+
+  process.env.SCRAPE_DELAY_SECONDS = '0';
+  assert.equal(parseScrapeDelaySeconds(), 0);
+
+  if (oldDelay === undefined) delete process.env.SCRAPE_DELAY_SECONDS;
+  else process.env.SCRAPE_DELAY_SECONDS = oldDelay;
 });

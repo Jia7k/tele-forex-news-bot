@@ -44,8 +44,7 @@ const port = config.port;
 app.use(express.json());
 
 const TARGET_TZ = config.targetTz;
-const MIN_SCRAPE_DELAY_MINUTES = 2;
-const SCRAPE_DELAY_MINUTES = Math.max(config.scrapeDelayMinutes, MIN_SCRAPE_DELAY_MINUTES);
+const SCRAPE_DELAY_SECONDS = config.scrapeDelaySeconds;
 const MIN_RESULT_RETRY_ATTEMPTS = 60;
 const RESULT_RETRY_ATTEMPTS = Math.max(config.resultRetryAttempts, MIN_RESULT_RETRY_ATTEMPTS);
 const RESULT_RETRY_DELAY_SECONDS = config.resultRetryDelaySeconds;
@@ -290,7 +289,7 @@ const getHealthPayload = () => {
       alerts: config.alertFilters,
     },
     release: {
-      scrapeDelayMinutes: SCRAPE_DELAY_MINUTES,
+      scrapeDelaySeconds: SCRAPE_DELAY_SECONDS,
       retryAttempts: RESULT_RETRY_ATTEMPTS,
       retryDelaySeconds: RESULT_RETRY_DELAY_SECONDS,
       catchupMinutes: RELEASE_CATCHUP_MINUTES,
@@ -542,7 +541,7 @@ const loadAndSchedule = async () => {
       });
     }
 
-    const scrapeTime = eventTime.clone().add(SCRAPE_DELAY_MINUTES, 'minutes');
+    const scrapeTime = eventTime.clone().add(SCRAPE_DELAY_SECONDS, 'seconds');
     const isCatchupRelease = !scrapeTime.isAfter(now) && eventTime.isSameOrAfter(scheduleStart);
 
     if (scrapeTime.isAfter(now) || isCatchupRelease) {

@@ -58,6 +58,8 @@ const parseFallbackProvider = () => {
   throw new Error('FALLBACK_PROVIDER must be none or tradingeconomics');
 };
 
+const parseScrapeDelaySeconds = () => parseInteger('SCRAPE_DELAY_SECONDS', 5, { min: 0 });
+
 const token = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || '';
 const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID || '';
 const targetTz = process.env.TARGET_TZ || 'Asia/Singapore';
@@ -68,7 +70,7 @@ const config = {
   baseUrl: process.env.BASE_URL || 'https://www.forexfactory.com',
   port: parseInteger('PORT', 3000, { min: 1, max: 65535 }),
   targetTz,
-  scrapeDelayMinutes: parseInteger('SCRAPE_DELAY_MINUTES', 2, { min: 0 }),
+  scrapeDelaySeconds: parseScrapeDelaySeconds(),
   resultRetryAttempts: parseInteger('RESULT_RETRY_ATTEMPTS', 60, { min: 0 }),
   resultRetryDelaySeconds: parseInteger('RESULT_RETRY_DELAY_SECONDS', 30, { min: 1 }),
   releaseCatchupMinutes: parseInteger('RELEASE_CATCHUP_MINUTES', 60, { min: 0 }),
@@ -146,5 +148,6 @@ module.exports = {
   parseChatIds,
   parseFallbackProvider,
   parseList,
+  parseScrapeDelaySeconds,
   parseTelegramMode,
 };
