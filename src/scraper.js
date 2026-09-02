@@ -236,6 +236,64 @@ const parsePublicCalendarFeed = (body) => {
   }).filter(Boolean);
 };
 
+const getDateQueryKey = (dateQuery) => {
+  const match = String(dateQuery || '').match(/^([a-z]{3})(\d{1,2})\.(\d{4})$/i);
+  if (!match) return null;
+
+  const date = moment.tz(`${match[1]} ${match[2]} ${match[3]}`, 'MMM D YYYY', true, TARGET_TZ);
+  return date.isValid() ? date.format('YYYY-MM-DD') : null;
+};
+
+const getEventDayKey = (event) => {
+  const timestamp = Number(event.timestamp);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+
+  return moment.unix(timestamp).tz(TARGET_TZ).format('YYYY-MM-DD');
+};
+
+const getPublicFeedEventsForQuery = (events, dateQuery) => {
+  const dateKey = getDateQueryKey(dateQuery);
+  return dateKey ? events.filter((event) => getEventDayKey(event) === dateKey) : events;
+};
+
+const normalizeIdentity = (value) => normalizeText(value).toLowerCase();
+
+const eventsMatch = (first, second) => {
+  const sameLabels = normalizeIdentity(first.currency) === normalizeIdentity(second.currency) &&
+    normalizeIdentity(first.eventName) === normalizeIdentity(second.eventName);
+  if (!sameLabels) return false;
+
+  const firstTimestamp = Number(first.timestamp);
+  const secondTimestamp = Number(second.timestamp);
+  if (Number.isFinite(firstTimestamp) && Number.isFinite(secondTimestamp)) {
+    return firstTimestamp === secondTimestamp;
+  }
+
+  return normalizeIdentity(first.dateStr) === normalizeIdentity(second.dateStr) &&
+    normalizeIdentity(first.timeText) === normalizeIdentity(second.timeText);
+};
+
+const mergeCalendarEvents = (baseEvents, enrichedEvents) => {
+  const mergedEvents = baseEvents.map((event) => ({ ...event }));
+
+  enrichedEvents.forEach((enrichedEvent) => {
+    const matchingIndex = mergedEvents.findIndex((event) => eventsMatch(event, enrichedEvent));
+    if (matchingIndex === -1) {
+      mergedEvents.push(enrichedEvent);
+      return;
+    }
+
+    const baseEvent = mergedEvents[matchingIndex];
+    const mergedEvent = { ...baseEvent, ...enrichedEvent };
+    ['actual', 'forecast', 'previous'].forEach((field) => {
+      if (!normalizeText(enrichedEvent[field])) mergedEvent[field] = baseEvent[field];
+    });
+    mergedEvents[matchingIndex] = mergedEvent;
+  });
+
+  return mergedEvents;
+};
+
 const fetchPublicCalendarFeed = async () => {
   const now = Date.now();
   if (publicFeedCache && now - publicFeedCache.fetchedAt < PUBLIC_FEED_CACHE_TTL_MS) {
@@ -265,7 +323,17 @@ const fetchCalendar = async (dateQuery = '', options = {}) => {
   const requestUrls = getCalendarRequestUrls(dateQuery, options);
   const url = requestUrls[0];
   const cacheKey = String(dateQuery || '__default__').toLowerCase();
+  let publicFeed = null;
+  let publicFeedFailure = null;
   let lastFailure = null;
+
+  try {
+    publicFeed = await fetchPublicCalendarFeed();
+  } catch (error) {
+    publicFeedFailure = error;
+  }
+
+  const feedEvents = publicFeed ? getPublicFeedEventsForQuery(publicFeed.events, dateQuery) : [];
 
   for (const requestUrl of requestUrls) {
     try {
@@ -289,17 +357,19 @@ const fetchCalendar = async (dateQuery = '', options = {}) => {
         continue;
       }
 
-      const { events, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
+      const { events: htmlEvents, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
+      const events = mergeCalendarEvents(feedEvents, htmlEvents);
 
-      if (expectedEventCount && events.length !== expectedEventCount) {
-        console.warn(`Forex Factory scraper captured ${events.length}/${expectedEventCount} event rows for ${requestUrl}`);
+      if (expectedEventCount && htmlEvents.length !== expectedEventCount) {
+        console.warn(`Forex Factory scraper captured ${htmlEvents.length}/${expectedEventCount} HTML event rows for ${requestUrl}`);
       }
 
       successfulCalendarCache.set(cacheKey, events);
       recordScrape({
         url: requestUrl,
-        expectedEventCount,
+        expectedEventCount: events.length,
         capturedEventCount: events.length,
+        source: publicFeed ? 'html+public-feed' : 'html',
       });
 
       return events;
@@ -309,19 +379,20 @@ const fetchCalendar = async (dateQuery = '', options = {}) => {
   }
 
   const error = lastFailure || new Error('Forex Factory calendar request failed');
-  try {
-    const publicFeed = await fetchPublicCalendarFeed();
-    console.warn(`Forex Factory HTML unavailable; using public calendar feed with ${publicFeed.events.length} row(s)`);
-    successfulCalendarCache.set(cacheKey, publicFeed.events);
+  if (publicFeed) {
+    console.warn(`Forex Factory HTML unavailable; using public calendar feed with ${feedEvents.length} row(s)`);
+    successfulCalendarCache.set(cacheKey, feedEvents);
     recordScrape({
       url: publicFeed.url,
-      expectedEventCount: publicFeed.events.length,
-      capturedEventCount: publicFeed.events.length,
+      expectedEventCount: feedEvents.length,
+      capturedEventCount: feedEvents.length,
       source: 'public-feed',
     });
-    return publicFeed.events;
-  } catch (feedError) {
-    lastFailure = new Error(`${error.message}; public feed failed: ${feedError.message}`);
+    return feedEvents;
+  }
+
+  if (publicFeedFailure) {
+    lastFailure = new Error(`${error.message}; public feed failed: ${publicFeedFailure.message}`);
   }
 
   const finalError = lastFailure || error;
@@ -346,6 +417,7 @@ const fetchCalendar = async (dateQuery = '', options = {}) => {
 module.exports = {
   classifyCalendarResponse,
   fetchCalendar,
+  mergeCalendarEvents,
   parseCalendarHtml,
   parsePublicCalendarFeed,
 };

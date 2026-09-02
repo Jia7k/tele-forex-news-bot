@@ -5,6 +5,7 @@ const {
   classifyCalendarResponse,
   parseCalendarHtml,
   parsePublicCalendarFeed,
+  mergeCalendarEvents,
 } = require('../src/scraper');
 
 test('classifyCalendarResponse identifies Cloudflare challenge pages as failed scrapes', () => {
@@ -52,6 +53,29 @@ test('parsePublicCalendarFeed converts feed timestamps into Singapore-time event
   assert.equal(events[0].previous, '2.50%');
   assert.equal(events[0].timestamp, 1788357600);
   assert.match(events[0].id, /^feed:/);
+});
+
+test('mergeCalendarEvents keeps feed rows and prefers HTML values for matching releases', () => {
+  const feedEvents = parsePublicCalendarFeed(JSON.stringify([{
+    title: 'Official Cash Rate',
+    country: 'NZD',
+    date: '2026-09-02T10:00:00-04:00',
+    impact: 'High',
+    forecast: '2.75%',
+    previous: '2.50%',
+  }]));
+  const htmlEvents = [{
+    ...feedEvents[0],
+    id: '148862',
+    actual: '2.75%',
+  }];
+
+  const mergedEvents = mergeCalendarEvents(feedEvents, htmlEvents);
+
+  assert.equal(mergedEvents.length, 1);
+  assert.equal(mergedEvents[0].id, '148862');
+  assert.equal(mergedEvents[0].actual, '2.75%');
+  assert.equal(mergedEvents[0].forecast, '2.75%');
 });
 
 test('parseCalendarHtml extracts Forex Factory event rows', () => {

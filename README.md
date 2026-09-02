@@ -5,7 +5,7 @@ A Node.js Telegram bot that monitors the Forex Factory economic calendar and sen
 ## Features
 
 - Scrapes Forex Factory calendar events in `Asia/Singapore` by default.
-- Falls back to Forex Factory's public calendar feed when the HTML page is temporarily blocked by Cloudflare.
+- Uses Forex Factory's public calendar feed as a resilient baseline when the HTML page is temporarily blocked by Cloudflare.
 - Sends daily summaries with complete event counts.
 - Sends 10-minute pre-release warnings for timed events.
 - Updates released values 2 minutes after release, then keeps retrying if `Actual` is still a placeholder.
@@ -98,7 +98,7 @@ See [.env.example](.env.example) for a complete template.
 
 ## Optional Fallback Provider
 
-Forex Factory HTML remains the primary source. If Cloudflare temporarily blocks the HTML page, the bot uses the public calendar feed to preserve event schedules. The feed includes event times, impact, forecasts, and previous values; the bot continues retrying the HTML page for released `Actual` values.
+The public calendar feed provides a resilient baseline for event times, impact, forecasts, and previous values. The bot then enriches those rows with Forex Factory HTML when available, preserving released `Actual` values. If Cloudflare blocks the HTML page, the feed still keeps the event schedule populated and the bot continues retrying HTML for released `Actual` values.
 
 If Forex Factory lags on `Actual` values, you can optionally enable Trading Economics as an additional secondary source:
 
