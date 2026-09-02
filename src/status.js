@@ -29,7 +29,14 @@ const summarizeEvent = (ev) => ({
   previous: normalizeValue(ev.previous),
 });
 
-const recordScrape = ({ url, expectedEventCount, capturedEventCount, ok = true, error = null }) => {
+const recordScrape = ({
+  url,
+  expectedEventCount,
+  capturedEventCount,
+  ok = true,
+  error = null,
+  source = 'html',
+}) => {
   const mismatch = ok && expectedEventCount > 0 && capturedEventCount !== expectedEventCount;
 
   if (mismatch || error) {
@@ -44,6 +51,7 @@ const recordScrape = ({ url, expectedEventCount, capturedEventCount, ok = true, 
     capturedEventCount,
     mismatch,
     error: error ? String(error) : null,
+    source,
   };
 };
 

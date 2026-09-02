@@ -75,6 +75,7 @@ const telegramMode = parseTelegramMode();
 
 const config = {
   baseUrl: process.env.BASE_URL || 'https://www.forexfactory.com',
+  publicCalendarFeedUrl: process.env.PUBLIC_CALENDAR_FEED_URL || 'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
   port: parseInteger('PORT', 3000, { min: 1, max: 65535 }),
   targetTz,
   scrapeDelaySeconds: parseScrapeDelaySeconds(),

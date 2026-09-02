@@ -1,7 +1,58 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseCalendarHtml } = require('../src/scraper');
+const {
+  classifyCalendarResponse,
+  parseCalendarHtml,
+  parsePublicCalendarFeed,
+} = require('../src/scraper');
+
+test('classifyCalendarResponse identifies Cloudflare challenge pages as failed scrapes', () => {
+  const result = classifyCalendarResponse({
+    statusCode: 403,
+    headers: { 'cf-mitigated': 'challenge' },
+    body: '<title>Just a moment...</title><script>window._cf_chl_opt = {};</script>',
+  });
+
+  assert.deepEqual(result, {
+    code: 'cloudflare-challenge',
+    message: 'Forex Factory returned a Cloudflare challenge',
+  });
+});
+
+test('classifyCalendarResponse does not reject a valid empty calendar page', () => {
+  const result = classifyCalendarResponse({
+    statusCode: 200,
+    headers: {},
+    body: '<html><title>Calendar | Forex Factory</title><table></table></html>',
+  });
+
+  assert.equal(result, null);
+});
+
+test('parsePublicCalendarFeed converts feed timestamps into Singapore-time event rows', () => {
+  const events = parsePublicCalendarFeed(JSON.stringify([{
+    title: 'Official Cash Rate',
+    country: 'NZD',
+    date: '2026-09-02T10:00:00-04:00',
+    impact: 'High',
+    forecast: '2.75%',
+    previous: '2.50%',
+  }]));
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].eventName, 'Official Cash Rate');
+  assert.equal(events[0].currency, 'NZD');
+  assert.equal(events[0].dateStr, 'Wed Sep 2');
+  assert.equal(events[0].timeText, '10:00pm');
+  assert.equal(events[0].year, 2026);
+  assert.equal(events[0].impact, 'High');
+  assert.equal(events[0].actual, '');
+  assert.equal(events[0].forecast, '2.75%');
+  assert.equal(events[0].previous, '2.50%');
+  assert.equal(events[0].timestamp, 1788357600);
+  assert.match(events[0].id, /^feed:/);
+});
 
 test('parseCalendarHtml extracts Forex Factory event rows', () => {
   const html = `

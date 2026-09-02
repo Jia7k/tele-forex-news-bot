@@ -225,6 +225,12 @@ const cancelStaleManagedJobs = (activeJobNames) => {
 const isSameEvent = (a, b) => (
   (a.id && b.id && a.id === b.id) ||
   (
+    a.timestamp && b.timestamp &&
+    Number(a.timestamp) === Number(b.timestamp) &&
+    a.currency === b.currency &&
+    a.eventName === b.eventName
+  ) ||
+  (
     a.currency === b.currency &&
     a.eventName === b.eventName &&
     a.dateStr === b.dateStr &&
@@ -260,9 +266,10 @@ const getScheduledJobSummary = () => {
 const getHealthPayload = () => {
   const statusState = getStatusState();
   const scheduledJobs = getScheduledJobSummary();
+  const scrapeFailed = Boolean(statusState.lastScrape && !statusState.lastScrape.ok);
 
   return {
-    status: statusState.telegram?.pollingConflict ? 'degraded' : 'ok',
+    status: statusState.telegram?.pollingConflict || scrapeFailed ? 'degraded' : 'ok',
     startedAt: statusState.startedAt,
     timezone: TARGET_TZ,
     timezoneLabel: TIMEZONE_LABEL,
@@ -316,6 +323,7 @@ const buildStatusMessage = () => {
     `Timezone: ${escapeHtml(TARGET_TZ)} (${escapeHtml(TIMEZONE_LABEL)})`,
     `Last fetch: ${escapeHtml(health.lastFetch || 'Never')}`,
     `Last scrape rows: ${lastScrape ? `${lastScrape.capturedEventCount}/${lastScrape.expectedEventCount || lastScrape.capturedEventCount}` : 'None'}`,
+    `Last scrape: ${lastScrape ? `${lastScrape.ok ? 'ok' : 'failed'} via ${escapeHtml(lastScrape.source || 'html')}${lastScrape.error ? ` (${escapeHtml(lastScrape.error)})` : ''}` : 'None'}`,
     `Scrape warnings: ${health.scrapeWarningCount}`,
     `Scheduled jobs: ${health.scheduledJobs.managedJobs} managed (${health.scheduledJobs.warningJobs} warnings, ${health.scheduledJobs.resultJobs} results)`,
     `Next job: ${nextJob ? `${escapeHtml(nextJob.name)} at ${escapeHtml(nextJob.nextRunAt)}` : 'None'}`,
@@ -396,7 +404,11 @@ const getDateQueryVariants = (dateQuery, groupEvents) => {
   return [...queries];
 };
 
-const getDedupeKey = (ev) => ev.id || `${ev.currency}:${ev.eventName}:${ev.dateStr}:${ev.timeText}`;
+const getDedupeKey = (ev) => (
+  ev.timestamp ?
+    `${ev.timestamp}:${ev.currency}:${ev.eventName}` :
+    `${ev.currency}:${ev.eventName}:${ev.dateStr}:${ev.timeText}`
+);
 
 const fetchFreshEventsAcrossDates = async (dateQueries) => {
   const seenEvents = new Set();
@@ -427,6 +439,18 @@ const fetchFreshResultEvents = async (dateQueries, groupEvents) => {
   };
 };
 
+const getLastScrapeFailure = () => {
+  const lastScrape = getStatusState().lastScrape;
+  return lastScrape && !lastScrape.ok ? lastScrape : null;
+};
+
+const buildScrapeFailureMessage = (displayTitle, failure) => (
+  `⚠️ <b>${escapeHtml(displayTitle)} (${TIMEZONE_LABEL}):</b>\n` +
+  `Forex Factory could not be refreshed, so no empty calendar result was reported.\n` +
+  `<b>Reason:</b> ${escapeHtml(failure.error || 'Unknown scrape error')}\n` +
+  'Please try again after the source is available.'
+);
+
 const sendReleaseGroupMessage = async (releaseEvents) => {
   if (releaseEvents.length === 0) return false;
 
@@ -450,8 +474,16 @@ const scheduleDailySummary = () => {
     const { targetDate, displayTitle, dateQuery } = getTargetDateInfo(now);
     const events = await fetchCalendar(dateQuery);
     setLastFetch(new Date().toISOString());
+    const scrapeFailure = getLastScrapeFailure();
+    if (scrapeFailure && events.length === 0) {
+      await sendTelegramMessage(buildScrapeFailureMessage(displayTitle, scrapeFailure));
+      return;
+    }
+
     const allTargetEvents = getEventsForDate(events, targetDate);
     const targetEvents = filterEvents(allTargetEvents, config.summaryFilters);
+    const cachedNotice = scrapeFailure ?
+      '⚠️ <b>Forex Factory refresh failed; showing the last successful calendar snapshot.</b>\n\n' : '';
 
     if (targetEvents.length === 0) {
       const emptyMessage = allTargetEvents.length === 0 ?
@@ -459,7 +491,7 @@ const scheduleDailySummary = () => {
         `📅 <b>${displayTitle} (${TIMEZONE_LABEL}):</b>\nNo events matched summary filters.\n<b>Total available:</b> ${allTargetEvents.length}`;
       await sendTelegramMessage(emptyMessage);
     } else {
-      await sendLongTelegramMessage(buildEventsReport(targetEvents, displayTitle, '🌅', allTargetEvents.length));
+      await sendLongTelegramMessage(cachedNotice + buildEventsReport(targetEvents, displayTitle, '🌅', allTargetEvents.length));
     }
   });
 };
@@ -481,8 +513,16 @@ const performSystemCheck = async (targetChatId) => {
   const { targetDate, displayTitle, dateQuery } = getTargetDateInfo(now);
   const events = await fetchCalendar(dateQuery);
   setLastFetch(new Date().toISOString());
+  const scrapeFailure = getLastScrapeFailure();
+  if (scrapeFailure && events.length === 0) {
+    await sendTelegramMessage(buildScrapeFailureMessage(displayTitle, scrapeFailure), targetChatId);
+    return;
+  }
+
   const allTargetEvents = getEventsForDate(events, targetDate);
   const targetEvents = filterEvents(allTargetEvents, config.summaryFilters);
+  const cachedNotice = scrapeFailure ?
+    '⚠️ <b>Forex Factory refresh failed; showing the last successful calendar snapshot.</b>\n\n' : '';
 
   if (targetEvents.length === 0) {
     const emptyMessage = allTargetEvents.length === 0 ?
@@ -490,7 +530,7 @@ const performSystemCheck = async (targetChatId) => {
       `No events matched summary filters for ${displayTitle} (${TIMEZONE_LABEL}). Total available: ${allTargetEvents.length}`;
     await sendTelegramMessage(emptyMessage, targetChatId);
   } else {
-    await sendLongTelegramMessage(buildEventsReport(targetEvents, displayTitle, '📋', allTargetEvents.length), targetChatId);
+    await sendLongTelegramMessage(cachedNotice + buildEventsReport(targetEvents, displayTitle, '📋', allTargetEvents.length), targetChatId);
   }
 };
 

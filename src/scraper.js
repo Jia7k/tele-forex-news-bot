@@ -1,4 +1,5 @@
 const cheerio = require('cheerio');
+const moment = require('moment-timezone');
 require('dotenv').config({ quiet: true });
 
 const { config } = require('./config');
@@ -6,6 +7,9 @@ const { recordScrape } = require('./status');
 
 const BASE = config.baseUrl;
 const TARGET_TZ = config.targetTz;
+const successfulCalendarCache = new Map();
+const PUBLIC_FEED_CACHE_TTL_MS = 30 * 1000;
+let publicFeedCache = null;
 
 const normalizeText = (text) => (
   text === null || text === undefined ? '' : String(text)
@@ -65,6 +69,46 @@ const getCalendarUrl = (dateQuery = '', options = {}) => {
   }
 
   return url;
+};
+
+const classifyCalendarResponse = (response) => {
+  const statusCode = Number(response?.statusCode || 0);
+  const headers = response?.headers || {};
+  const body = String(response?.body || '');
+  const isCloudflareChallenge = String(headers['cf-mitigated'] || '').toLowerCase() === 'challenge' ||
+    /<title>\s*Just a moment|_cf_chl_opt|Enable JavaScript and cookies to continue/i.test(body);
+
+  if (isCloudflareChallenge) {
+    return {
+      code: 'cloudflare-challenge',
+      message: 'Forex Factory returned a Cloudflare challenge',
+    };
+  }
+
+  if (statusCode >= 400) {
+    return {
+      code: 'http-error',
+      message: `Forex Factory returned HTTP ${statusCode}`,
+    };
+  }
+
+  return null;
+};
+
+const getFeedImpact = (impact) => {
+  const normalizedImpact = normalizeText(impact).toLowerCase();
+  if (normalizedImpact === 'high') return 'High';
+  if (normalizedImpact === 'medium' || normalizedImpact === 'orange') return 'Medium';
+  if (normalizedImpact === 'holiday' || normalizedImpact === 'non-economic') return 'Non-Economic';
+  return 'Low';
+};
+
+const getCalendarRequestUrls = (dateQuery, options = {}) => {
+  const requestedUrl = getCalendarUrl(dateQuery, options);
+  if (!options.cacheBust) return [requestedUrl];
+
+  const canonicalUrl = getCalendarUrl(dateQuery);
+  return requestedUrl === canonicalUrl ? [requestedUrl] : [requestedUrl, canonicalUrl];
 };
 
 const decodeJsonString = (value) => {
@@ -160,47 +204,148 @@ const parseCalendarHtml = (html, dateQuery = '') => {
   return { events, expectedEventCount };
 };
 
-const fetchCalendar = async (dateQuery = '', options = {}) => {
-  const { gotScraping } = await import('got-scraping');
-  const url = getCalendarUrl(dateQuery, options);
+const parsePublicCalendarFeed = (body) => {
+  const rows = JSON.parse(String(body || ''));
+  if (!Array.isArray(rows)) throw new Error('Forex Factory public feed returned a non-array payload');
 
-  try {
-    const response = await gotScraping({
-      url,
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};`,
-      },
-      headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'] },
-      retry: { limit: 2, methods: ['GET'] },
-      timeout: { request: 30000 },
-    });
+  return rows.map((row) => {
+    const eventName = normalizeText(row.title || row.event || row.name);
+    const currency = normalizeText(row.country || row.currency);
+    const eventMoment = moment.parseZone(String(row.date || ''));
 
-    const { events, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
+    if (!eventName || !currency || !eventMoment.isValid()) return null;
 
-    if (expectedEventCount && events.length !== expectedEventCount) {
-      console.warn(`Forex Factory scraper captured ${events.length}/${expectedEventCount} event rows for ${url}`);
-    }
+    const singaporeMoment = eventMoment.tz(TARGET_TZ);
+    const dateStr = singaporeMoment.format('ddd MMM D');
+    const timeText = singaporeMoment.format('h:mma');
+    const id = `feed:${fallbackEventId({ dateStr, timeText, currency, eventName })}`;
 
-    recordScrape({
-      url,
-      expectedEventCount,
-      capturedEventCount: events.length,
-    });
-    
-    return events;
-  } catch (error) {
-    console.error('Error in scraper:', error.message);
-    recordScrape({
-      url,
-      expectedEventCount: 0,
-      capturedEventCount: 0,
-      ok: false,
-      error: error.message,
-    });
-    return [];
-  }
+    return {
+      id,
+      dateStr,
+      year: singaporeMoment.year(),
+      timeText,
+      timestamp: eventMoment.unix(),
+      currency,
+      impact: getFeedImpact(row.impact),
+      eventName,
+      actual: normalizeText(row.actual ?? row.Actual),
+      forecast: normalizeText(row.forecast ?? row.Forecast),
+      previous: normalizeText(row.previous ?? row.Previous),
+    };
+  }).filter(Boolean);
 };
 
-module.exports = { fetchCalendar, parseCalendarHtml };
+const fetchPublicCalendarFeed = async () => {
+  const now = Date.now();
+  if (publicFeedCache && now - publicFeedCache.fetchedAt < PUBLIC_FEED_CACHE_TTL_MS) {
+    return publicFeedCache;
+  }
+
+  const url = config.publicCalendarFeedUrl;
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Forex Factory public feed returned HTTP ${response.status}`);
+  }
+
+  const events = parsePublicCalendarFeed(await response.text());
+  publicFeedCache = { fetchedAt: Date.now(), url, events };
+  return publicFeedCache;
+};
+
+const fetchCalendar = async (dateQuery = '', options = {}) => {
+  const { gotScraping } = await import('got-scraping');
+  const requestUrls = getCalendarRequestUrls(dateQuery, options);
+  const url = requestUrls[0];
+  const cacheKey = String(dateQuery || '__default__').toLowerCase();
+  let lastFailure = null;
+
+  for (const requestUrl of requestUrls) {
+    try {
+      const response = await gotScraping({
+        url: requestUrl,
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};`,
+        },
+        headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'] },
+        retry: { limit: 2, methods: ['GET'] },
+        timeout: { request: 30000 },
+        throwHttpErrors: false,
+      });
+
+      const responseFailure = classifyCalendarResponse(response);
+      if (responseFailure) {
+        lastFailure = new Error(responseFailure.message);
+        lastFailure.code = responseFailure.code;
+        continue;
+      }
+
+      const { events, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
+
+      if (expectedEventCount && events.length !== expectedEventCount) {
+        console.warn(`Forex Factory scraper captured ${events.length}/${expectedEventCount} event rows for ${requestUrl}`);
+      }
+
+      successfulCalendarCache.set(cacheKey, events);
+      recordScrape({
+        url: requestUrl,
+        expectedEventCount,
+        capturedEventCount: events.length,
+      });
+
+      return events;
+    } catch (error) {
+      lastFailure = error;
+    }
+  }
+
+  const error = lastFailure || new Error('Forex Factory calendar request failed');
+  try {
+    const publicFeed = await fetchPublicCalendarFeed();
+    console.warn(`Forex Factory HTML unavailable; using public calendar feed with ${publicFeed.events.length} row(s)`);
+    successfulCalendarCache.set(cacheKey, publicFeed.events);
+    recordScrape({
+      url: publicFeed.url,
+      expectedEventCount: publicFeed.events.length,
+      capturedEventCount: publicFeed.events.length,
+      source: 'public-feed',
+    });
+    return publicFeed.events;
+  } catch (feedError) {
+    lastFailure = new Error(`${error.message}; public feed failed: ${feedError.message}`);
+  }
+
+  const finalError = lastFailure || error;
+  const cachedEvents = successfulCalendarCache.get(cacheKey);
+  const cacheAvailable = successfulCalendarCache.has(cacheKey);
+  const cacheNote = cacheAvailable ? `; using ${cachedEvents.length} cached row(s)` : '';
+  const errorMessage = `${finalError.message}${cacheNote}`;
+
+  console.error('Error in scraper:', errorMessage);
+  recordScrape({
+    url,
+    expectedEventCount: cacheAvailable ? cachedEvents.length : 0,
+    capturedEventCount: cacheAvailable ? cachedEvents.length : 0,
+    ok: false,
+    error: errorMessage,
+  });
+
+  if (cacheAvailable) return cachedEvents;
+  return [];
+};
+
+module.exports = {
+  classifyCalendarResponse,
+  fetchCalendar,
+  parseCalendarHtml,
+  parsePublicCalendarFeed,
+};
