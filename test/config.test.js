@@ -7,6 +7,9 @@ const {
   parseFallbackProvider,
   parseList,
   parseScrapeDelaySeconds,
+  parseTelegramPollingErrorLogThrottleSeconds,
+  parseTelegramPollingIntervalMs,
+  parseTelegramPollingTimeoutSeconds,
   parseTelegramMode,
 } = require('../src/config');
 
@@ -80,4 +83,35 @@ test('parseScrapeDelaySeconds defaults to an early first result scrape', () => {
 
   if (oldDelay === undefined) delete process.env.SCRAPE_DELAY_SECONDS;
   else process.env.SCRAPE_DELAY_SECONDS = oldDelay;
+});
+
+test('Telegram polling retry settings default to calmer long polling', () => {
+  const oldInterval = process.env.TELEGRAM_POLLING_INTERVAL_MS;
+  const oldTimeout = process.env.TELEGRAM_POLLING_TIMEOUT_SECONDS;
+  const oldThrottle = process.env.TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS;
+
+  delete process.env.TELEGRAM_POLLING_INTERVAL_MS;
+  delete process.env.TELEGRAM_POLLING_TIMEOUT_SECONDS;
+  delete process.env.TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS;
+
+  assert.equal(parseTelegramPollingIntervalMs(), 5000);
+  assert.equal(parseTelegramPollingTimeoutSeconds(), 30);
+  assert.equal(parseTelegramPollingErrorLogThrottleSeconds(), 60);
+
+  process.env.TELEGRAM_POLLING_INTERVAL_MS = '8000';
+  process.env.TELEGRAM_POLLING_TIMEOUT_SECONDS = '45';
+  process.env.TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS = '10';
+
+  assert.equal(parseTelegramPollingIntervalMs(), 8000);
+  assert.equal(parseTelegramPollingTimeoutSeconds(), 45);
+  assert.equal(parseTelegramPollingErrorLogThrottleSeconds(), 10);
+
+  if (oldInterval === undefined) delete process.env.TELEGRAM_POLLING_INTERVAL_MS;
+  else process.env.TELEGRAM_POLLING_INTERVAL_MS = oldInterval;
+
+  if (oldTimeout === undefined) delete process.env.TELEGRAM_POLLING_TIMEOUT_SECONDS;
+  else process.env.TELEGRAM_POLLING_TIMEOUT_SECONDS = oldTimeout;
+
+  if (oldThrottle === undefined) delete process.env.TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS;
+  else process.env.TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS = oldThrottle;
 });

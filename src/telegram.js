@@ -2,41 +2,14 @@ require('dotenv').config({ quiet: true });
 const TelegramBot = require('node-telegram-bot-api');
 
 const { config } = require('./config');
-const { recordTelegramPollingError } = require('./status');
+const { buildTelegramBotOptions } = require('./telegramOptions');
+const { createPollingErrorHandler } = require('./telegramPollingErrors');
 
-const bot = new TelegramBot(config.telegram.token, {
-  polling: config.telegram.polling,
-  request: {
-    agentOptions: {
-      family: 4
-    }
-  }
-});
+const bot = new TelegramBot(config.telegram.token, buildTelegramBotOptions(config.telegram));
 
-bot.on('polling_error', (error) => {
-  const description = error.response?.body?.description || error.message || String(error);
-  const statusCode = error.response?.statusCode || error.response?.body?.error_code || null;
-  const isConflict = Number(statusCode) === 409 ||
-    description.includes('409') ||
-    (
-      error.code === 'ETELEGRAM' &&
-      /conflict/i.test(description) &&
-      /getUpdates|bot instance|poll/i.test(description)
-    );
-
-  recordTelegramPollingError({
-    code: error.code,
-    statusCode,
-    description,
-  });
-
-  if (isConflict) {
-    console.error('Telegram polling conflict: another bot instance is already running with this token.');
-    return;
-  }
-
-  console.error('Telegram Polling Error:', description);
-});
+bot.on('polling_error', createPollingErrorHandler({
+  logThrottleMs: config.telegram.pollingErrorLogThrottleSeconds * 1000,
+}));
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

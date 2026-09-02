@@ -59,6 +59,13 @@ const parseFallbackProvider = () => {
 };
 
 const parseScrapeDelaySeconds = () => parseInteger('SCRAPE_DELAY_SECONDS', 5, { min: 0 });
+const parseTelegramPollingIntervalMs = () => parseInteger('TELEGRAM_POLLING_INTERVAL_MS', 5000, { min: 1000 });
+const parseTelegramPollingTimeoutSeconds = () => parseInteger('TELEGRAM_POLLING_TIMEOUT_SECONDS', 30, { min: 1 });
+const parseTelegramPollingErrorLogThrottleSeconds = () => parseInteger(
+  'TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS',
+  60,
+  { min: 0 }
+);
 
 const token = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || '';
 const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID || '';
@@ -98,6 +105,9 @@ const config = {
     allowedChatIds,
     mode: telegramMode,
     polling: telegramMode === 'polling',
+    pollingIntervalMs: parseTelegramPollingIntervalMs(),
+    pollingTimeoutSeconds: parseTelegramPollingTimeoutSeconds(),
+    pollingErrorLogThrottleSeconds: parseTelegramPollingErrorLogThrottleSeconds(),
     webhookUrl: process.env.TELEGRAM_WEBHOOK_URL || '',
     webhookPath: process.env.TELEGRAM_WEBHOOK_PATH || '/telegram/webhook',
     webhookSecretToken: process.env.TELEGRAM_WEBHOOK_SECRET || '',
@@ -149,5 +159,8 @@ module.exports = {
   parseFallbackProvider,
   parseList,
   parseScrapeDelaySeconds,
+  parseTelegramPollingErrorLogThrottleSeconds,
+  parseTelegramPollingIntervalMs,
+  parseTelegramPollingTimeoutSeconds,
   parseTelegramMode,
 };

@@ -58,6 +58,9 @@ TELEGRAM_MODE=disabled npm start
 | `TARGET_TZ` | No | `Asia/Singapore` | IANA timezone used for parsing, reports, and scheduling. |
 | `ALLOWED_CHAT_IDS` | No | `TELEGRAM_CHAT_ID` | Comma-separated chats allowed to run `/check`, `/status`, and `/pending`. |
 | `TELEGRAM_MODE` | No | `polling` | `polling`, `webhook`, or `disabled`. |
+| `TELEGRAM_POLLING_INTERVAL_MS` | No | `5000` | Delay between Telegram polling requests. Keeps transient gateway errors from retrying too aggressively. |
+| `TELEGRAM_POLLING_TIMEOUT_SECONDS` | No | `30` | Telegram long-poll timeout. |
+| `TELEGRAM_POLLING_ERROR_LOG_THROTTLE_SECONDS` | No | `60` | Minimum seconds between repeated transient polling error logs. |
 | `TELEGRAM_WEBHOOK_URL` | Webhook only | | Full public webhook URL. |
 | `TELEGRAM_WEBHOOK_PATH` | No | `/telegram/webhook` | Express route used for Telegram webhook updates. |
 | `TELEGRAM_WEBHOOK_SECRET` | No | | Secret token checked on webhook requests. |
