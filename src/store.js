@@ -58,4 +58,6 @@ module.exports = {
   getSentEventCount: () => getSentEvents().length,
   setLastFetch: (t) => db.set('lastFetch', t).write(),
   getLastFetch: () => db.get('lastFetch').value(),
+  getQolState: () => JSON.parse(JSON.stringify(db.get('qol').value() || {})),
+  saveQolState: (state) => db.set('qol', JSON.parse(JSON.stringify(state))).write(),
 };

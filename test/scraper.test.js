@@ -6,7 +6,32 @@ const {
   parseCalendarHtml,
   parsePublicCalendarFeed,
   mergeCalendarEvents,
+  createCalendarFetcher,
 } = require('../src/scraper');
+
+test('snapshot metadata belongs to each request and blocked requests never become authoritative empty calendars', async () => {
+  assert.equal(typeof createCalendarFetcher, 'function');
+  const fetcher = createCalendarFetcher({
+    loadFeed: async () => { throw new Error('feed down'); },
+    requestHtml: async () => ({ statusCode: 403, headers: {}, body: '<title>Just a moment...</title>' }),
+    record: () => {},
+  });
+  const result = await fetcher('sep9.2026');
+  assert.equal(result.ok, false);
+  assert.equal(result.authoritative, false);
+  assert.deepEqual(result.events, []);
+});
+
+test('an incomplete HTML response carries partial metadata', async () => {
+  const fetcher = createCalendarFetcher({
+    loadFeed: async () => { throw new Error('feed down'); },
+    requestHtml: async () => ({ statusCode: 200, headers: {}, body: '<title>Calendar | Forex Factory</title><table><tr class="calendar__row" data-event-id="1"></tr></table>' }),
+    record: () => {},
+  });
+  const result = await fetcher('sep9.2026');
+  assert.equal(result.authoritative, false);
+  assert.equal(result.partial, true);
+});
 
 test('classifyCalendarResponse identifies Cloudflare challenge pages as failed scrapes', () => {
   const result = classifyCalendarResponse({

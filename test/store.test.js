@@ -9,6 +9,17 @@ process.env.STORE_PATH = path.join(storeDir, 'store.json');
 
 const store = require('../src/store');
 
+test('QOL state persists without overwriting existing release dedupe', () => {
+  store.markSent('qol-baseline');
+  assert.equal(typeof store.saveQolState, 'function');
+  store.saveQolState({ chats: { '1': { pauseUntil: 2000 } }, records: {} });
+  assert.equal(store.getQolState().chats['1'].pauseUntil, 2000);
+  assert.equal(store.hasSent('qol-baseline'), true);
+  const copy = store.getQolState();
+  copy.chats['1'].pauseUntil = 0;
+  assert.equal(store.getQolState().chats['1'].pauseUntil, 2000);
+});
+
 test('store normalizes sent event ids and avoids duplicates', () => {
   assert.equal(store.hasSent(123), false);
   assert.equal(store.markSent(123), true);
@@ -16,9 +27,9 @@ test('store normalizes sent event ids and avoids duplicates', () => {
   assert.equal(store.markSent('123'), false);
 
   const persisted = JSON.parse(fs.readFileSync(process.env.STORE_PATH, 'utf8'));
-  assert.equal(persisted.sentEvents.length, 1);
-  assert.equal(persisted.sentEvents[0].id, '123');
-  assert.match(persisted.sentEvents[0].sentAt, /^\d{4}-\d{2}-\d{2}T/);
+  const entry = persisted.sentEvents.find((item) => item.id === '123');
+  assert.ok(entry);
+  assert.match(entry.sentAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('store cleans up timestamped sent event ids but keeps legacy ids', () => {

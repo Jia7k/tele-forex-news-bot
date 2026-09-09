@@ -4,6 +4,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { config } = require('./config');
 const { buildTelegramBotOptions } = require('./telegramOptions');
 const { createPollingErrorHandler } = require('./telegramPollingErrors');
+const { createTelegramTransport, splitTelegramHtml } = require('./telegramTransport');
 
 const bot = new TelegramBot(config.telegram.token, buildTelegramBotOptions(config.telegram));
 
@@ -12,57 +13,7 @@ bot.on('polling_error', createPollingErrorHandler({
 }));
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const shouldSkipTelegramSend = (label) => {
-  if (config.telegram.mode !== 'disabled') return false;
-
-  console.log(`${label} skipped because TELEGRAM_MODE=disabled`);
-  return true;
-};
-
-const sendWithRetries = async (label, operation) => {
-  for (let attempt = 0; attempt <= config.telegram.sendRetryAttempts; attempt += 1) {
-    try {
-      await operation();
-      return true;
-    } catch (error) {
-      const isFinalAttempt = attempt === config.telegram.sendRetryAttempts;
-      const attemptLabel = `${attempt + 1}/${config.telegram.sendRetryAttempts + 1}`;
-      console.error(`${label} Error (${attemptLabel}):`, error.message);
-
-      if (isFinalAttempt) return false;
-      await delay(config.telegram.sendRetryDelaySeconds * 1000);
-    }
-  }
-
-  return false;
-};
-
-const sendTelegramMessage = async (text, targetChatId = config.telegram.chatId) => {
-  if (shouldSkipTelegramSend('Telegram Send')) return false;
-
-  const recipient = targetChatId ?? config.telegram.chatId;
-  if (!recipient) {
-    console.error('CHAT_ID missing in .env');
-    return false;
-  }
-  return sendWithRetries('Telegram Send', () => (
-    bot.sendMessage(recipient, text, { parse_mode: 'HTML' })
-  ));
-};
-
-const sendTelegramPhoto = async (photoUrl, captionText, targetChatId = config.telegram.chatId) => {
-  if (shouldSkipTelegramSend('Telegram Photo Send')) return false;
-
-  const recipient = targetChatId ?? config.telegram.chatId;
-  if (!recipient) {
-    console.error('CHAT_ID missing in .env');
-    return false;
-  }
-  return sendWithRetries('Telegram Photo Send', () => (
-    bot.sendPhoto(recipient, photoUrl, { caption: captionText, parse_mode: 'HTML' })
-  ));
-};
+const transport = createTelegramTransport({ bot, config: config.telegram, delay, logger: console });
 
 const registerTelegramWebhook = async (app) => {
   if (config.telegram.mode !== 'webhook') return false;
@@ -89,4 +40,4 @@ const registerTelegramWebhook = async (app) => {
   return true;
 };
 
-module.exports = { sendTelegramMessage, sendTelegramPhoto, registerTelegramWebhook, bot };
+module.exports = { ...transport, splitTelegramHtml, registerTelegramWebhook, bot };

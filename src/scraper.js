@@ -7,7 +7,6 @@ const { recordScrape } = require('./status');
 
 const BASE = config.baseUrl;
 const TARGET_TZ = config.targetTz;
-const successfulCalendarCache = new Map();
 const PUBLIC_FEED_CACHE_TTL_MS = 30 * 1000;
 let publicFeedCache = null;
 
@@ -302,6 +301,7 @@ const fetchPublicCalendarFeed = async () => {
 
   const url = config.publicCalendarFeedUrl;
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(30000),
     headers: {
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
@@ -318,105 +318,120 @@ const fetchPublicCalendarFeed = async () => {
   return publicFeedCache;
 };
 
-const fetchCalendar = async (dateQuery = '', options = {}) => {
-  const { gotScraping } = await import('got-scraping');
-  const requestUrls = getCalendarRequestUrls(dateQuery, options);
-  const url = requestUrls[0];
-  const cacheKey = String(dateQuery || '__default__').toLowerCase();
-  let publicFeed = null;
-  let publicFeedFailure = null;
-  let lastFailure = null;
+const createCalendarFetcher = ({
+  requestHtml = async (options) => (await import('got-scraping')).gotScraping(options),
+  loadFeed = fetchPublicCalendarFeed,
+  record = recordScrape,
+} = {}) => {
+  const successfulCalendarCache = new Map();
+  return async (dateQuery = '', options = {}) => {
+    const requestStartedAt = Date.now();
+    const requestUrls = getCalendarRequestUrls(dateQuery, options);
+    const url = requestUrls[0];
+    const cacheKey = String(dateQuery || '__default__').toLowerCase();
+    let publicFeed = null;
+    let publicFeedFailure = null;
+    let lastFailure = null;
 
-  try {
-    publicFeed = await fetchPublicCalendarFeed();
-  } catch (error) {
-    publicFeedFailure = error;
-  }
-
-  const feedEvents = publicFeed ? getPublicFeedEventsForQuery(publicFeed.events, dateQuery) : [];
-
-  for (const requestUrl of requestUrls) {
     try {
-      const response = await gotScraping({
-        url: requestUrl,
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};`,
-        },
-        headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'] },
-        retry: { limit: 2, methods: ['GET'] },
-        timeout: { request: 30000 },
-        throwHttpErrors: false,
-      });
-
-      const responseFailure = classifyCalendarResponse(response);
-      if (responseFailure) {
-        lastFailure = new Error(responseFailure.message);
-        lastFailure.code = responseFailure.code;
-        continue;
-      }
-
-      const { events: htmlEvents, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
-      const events = mergeCalendarEvents(feedEvents, htmlEvents);
-
-      if (expectedEventCount && htmlEvents.length !== expectedEventCount) {
-        console.warn(`Forex Factory scraper captured ${htmlEvents.length}/${expectedEventCount} HTML event rows for ${requestUrl}`);
-      }
-
-      successfulCalendarCache.set(cacheKey, events);
-      recordScrape({
-        url: requestUrl,
-        expectedEventCount: events.length,
-        capturedEventCount: events.length,
-        source: publicFeed ? 'html+public-feed' : 'html',
-      });
-
-      return events;
+      publicFeed = await loadFeed();
     } catch (error) {
-      lastFailure = error;
+      publicFeedFailure = error;
     }
-  }
 
-  const error = lastFailure || new Error('Forex Factory calendar request failed');
-  if (publicFeed) {
-    console.warn(`Forex Factory HTML unavailable; using public calendar feed with ${feedEvents.length} row(s)`);
-    successfulCalendarCache.set(cacheKey, feedEvents);
-    recordScrape({
-      url: publicFeed.url,
-      expectedEventCount: feedEvents.length,
-      capturedEventCount: feedEvents.length,
-      source: 'public-feed',
-    });
-    return feedEvents;
-  }
+    const feedEvents = publicFeed ? getPublicFeedEventsForQuery(publicFeed.events, dateQuery) : [];
 
-  if (publicFeedFailure) {
-    lastFailure = new Error(`${error.message}; public feed failed: ${publicFeedFailure.message}`);
-  }
+    for (const requestUrl of requestUrls) {
+      try {
+        const response = await requestHtml({
+          url: requestUrl,
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Cookie': `timezone=${encodeURIComponent(TARGET_TZ)};`,
+          },
+          headerGeneratorOptions: { browsers: [{ name: 'chrome', minVersion: 110 }], devices: ['desktop'] },
+          retry: { limit: 2, methods: ['GET'] },
+          timeout: { request: 30000 },
+          throwHttpErrors: false,
+        });
 
-  const finalError = lastFailure || error;
-  const cachedEvents = successfulCalendarCache.get(cacheKey);
-  const cacheAvailable = successfulCalendarCache.has(cacheKey);
-  const cacheNote = cacheAvailable ? `; using ${cachedEvents.length} cached row(s)` : '';
-  const errorMessage = `${finalError.message}${cacheNote}`;
+        const responseFailure = classifyCalendarResponse(response);
+        if (responseFailure) {
+          lastFailure = new Error(responseFailure.message);
+          lastFailure.code = responseFailure.code;
+          continue;
+        }
 
-  console.error('Error in scraper:', errorMessage);
-  recordScrape({
-    url,
-    expectedEventCount: cacheAvailable ? cachedEvents.length : 0,
-    capturedEventCount: cacheAvailable ? cachedEvents.length : 0,
-    ok: false,
-    error: errorMessage,
-  });
+        const { events: htmlEvents, expectedEventCount } = parseCalendarHtml(response.body, dateQuery);
+        const events = mergeCalendarEvents(feedEvents, htmlEvents);
 
-  if (cacheAvailable) return cachedEvents;
-  return [];
+        if (expectedEventCount && htmlEvents.length !== expectedEventCount) {
+          console.warn(`Forex Factory scraper captured ${htmlEvents.length}/${expectedEventCount} HTML event rows for ${requestUrl}`);
+        }
+
+        successfulCalendarCache.set(cacheKey, events);
+        const partial = expectedEventCount > htmlEvents.length;
+        const metadata = {
+          url: requestUrl,
+          expectedEventCount: Math.max(expectedEventCount, events.length),
+          capturedEventCount: events.length,
+          source: publicFeed ? 'html+public-feed' : 'html',
+          ok: true,
+        };
+        record(metadata);
+        return { ...metadata, events, partial, authoritative: !partial, requestStartedAt, fetchedAt: Date.now() };
+      } catch (error) {
+        lastFailure = error;
+      }
+    }
+
+    const error = lastFailure || new Error('Forex Factory calendar request failed');
+    if (publicFeed) {
+      console.warn(`Forex Factory HTML unavailable; using public calendar feed with ${feedEvents.length} row(s)`);
+      successfulCalendarCache.set(cacheKey, feedEvents);
+      const metadata = {
+        url: publicFeed.url,
+        expectedEventCount: feedEvents.length,
+        capturedEventCount: feedEvents.length,
+        source: 'public-feed',
+        ok: true,
+      };
+      record(metadata);
+      return { ...metadata, events: feedEvents, authoritative: false, requestStartedAt: publicFeed.fetchedAt || requestStartedAt, fetchedAt: publicFeed.fetchedAt || Date.now() };
+    }
+
+    if (publicFeedFailure) {
+      lastFailure = new Error(`${error.message}; public feed failed: ${publicFeedFailure.message}`);
+    }
+
+    const finalError = lastFailure || error;
+    const cachedEvents = successfulCalendarCache.get(cacheKey);
+    const cacheAvailable = successfulCalendarCache.has(cacheKey);
+    const cacheNote = cacheAvailable ? `; using ${cachedEvents.length} cached row(s)` : '';
+    const errorMessage = `${finalError.message}${cacheNote}`;
+
+    console.error('Error in scraper:', errorMessage);
+    const metadata = {
+      url,
+      expectedEventCount: cacheAvailable ? cachedEvents.length : 0,
+      capturedEventCount: cacheAvailable ? cachedEvents.length : 0,
+      ok: false,
+      error: errorMessage,
+    };
+    record(metadata);
+    return { ...metadata, events: cachedEvents || [], authoritative: false, stale: true, requestStartedAt };
+  };
 };
+
+const fetchCalendarSnapshot = createCalendarFetcher();
+const fetchCalendar = async (dateQuery = '', options = {}) => (await fetchCalendarSnapshot(dateQuery, options)).events;
 
 module.exports = {
   classifyCalendarResponse,
   fetchCalendar,
+  fetchCalendarSnapshot,
+  createCalendarFetcher,
   mergeCalendarEvents,
   parseCalendarHtml,
   parsePublicCalendarFeed,

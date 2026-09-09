@@ -154,11 +154,12 @@ const withReleaseTimestamp = (ev) => ({
     parseTimeText(ev.dateStr, ev.timeText, ev.year)?.getTime(),
 });
 
-const formatGoldOutlook = (ev, options) => {
-  const outlook = getGoldOutlook(withReleaseTimestamp(ev), {
+const getEventGoldOutlook = (ev, options = {}) => getGoldOutlook(withReleaseTimestamp(ev), {
     ...options,
     contextEvents: (options.contextEvents || []).map(withReleaseTimestamp),
   });
+const formatGoldOutlook = (ev, options) => {
+  const outlook = getEventGoldOutlook(ev, options);
   const labels = { long: 'LONG', short: 'SHORT', wait: 'WAIT', neutral: 'NEUTRAL' };
   return `└ Gold : <b>${labels[outlook.bias] || 'NEUTRAL'}</b>`;
 };
@@ -280,6 +281,7 @@ module.exports = {
   formatEventTime,
   generateChartUrl,
   getSurpriseText,
+  getEventGoldOutlook,
   escapeHtml,
   getImpactIcon,
   getTimezoneLabel,
