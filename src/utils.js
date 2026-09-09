@@ -2,6 +2,7 @@ const moment = require('moment-timezone');
 require('dotenv').config({ quiet: true });
 
 const { config } = require('./config');
+const { getGoldOutlook } = require('./goldOutlook');
 
 const TARGET_TZ = config.targetTz;
 const MONTHS = {
@@ -147,7 +148,22 @@ const getImpactIcon = (impact) => {
   return '⚪️';
 };
 
-const formatEventMessage = (ev) => {
+const withReleaseTimestamp = (ev) => ({
+  ...ev,
+  timestamp: getTimestampMoment(ev)?.valueOf() ??
+    parseTimeText(ev.dateStr, ev.timeText, ev.year)?.getTime(),
+});
+
+const formatGoldOutlook = (ev, options) => {
+  const outlook = getGoldOutlook(withReleaseTimestamp(ev), {
+    ...options,
+    contextEvents: (options.contextEvents || []).map(withReleaseTimestamp),
+  });
+  const labels = { long: 'LONG', short: 'SHORT', wait: 'WAIT', neutral: 'NEUTRAL' };
+  return `└ Gold : <b>${labels[outlook.bias] || 'NEUTRAL'}</b>`;
+};
+
+const formatEventMessage = (ev, options = {}) => {
   const impactIcon = getImpactIcon(ev.impact);
 
   const actual = hasDataValue(ev.actual) ? `<b>${escapeHtml(ev.actual)}</b>` : '--';
@@ -156,10 +172,30 @@ const formatEventMessage = (ev) => {
   const currency = escapeHtml(ev.currency);
   const eventName = escapeHtml(ev.eventName);
   const surprise = getSurpriseText(ev);
-  const previousPrefix = surprise ? '├' : '└';
-  const surpriseLine = surprise ? `\n└ ${surprise}` : '';
+  const surpriseLine = surprise ? `\n├ ${surprise}` : '';
 
-  return `\n${impactIcon} <b>${currency} - ${eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n${previousPrefix} Prev: ${previous}${surpriseLine}\n`;
+  return `\n${impactIcon} <b>${currency} - ${eventName}</b>\n├ Act: ${actual}\n├ Fcst: ${forecast}\n├ Prev: ${previous}${surpriseLine}\n${formatGoldOutlook(ev, options)}\n`;
+};
+
+const buildEventAlertBatches = (events, {
+  heading,
+  phase = 'release',
+  contextEvents = events,
+  maxLength = config.telegramMessageChunkSize,
+}) => {
+  const batches = [];
+  let batch = { text: heading, events: [] };
+  for (const ev of events) {
+    const message = formatEventMessage(ev, { phase, contextEvents });
+    if (batch.events.length > 0 && batch.text.length + message.length > maxLength) {
+      batches.push(batch);
+      batch = { text: heading, events: [] };
+    }
+    batch.text += message;
+    batch.events.push(ev);
+  }
+  if (batch.events.length > 0) batches.push(batch);
+  return batches;
 };
 
 const parseMetricValue = (str) => {
@@ -237,6 +273,7 @@ const generateChartUrl = (ev) => {
 };
 
 module.exports = {
+  buildEventAlertBatches,
   parseDateText,
   parseTimeText,
   formatEventMessage,

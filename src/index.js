@@ -10,7 +10,7 @@ const { fetchCalendar } = require('./scraper');
 const {
   parseDateText,
   parseTimeText,
-  formatEventMessage,
+  buildEventAlertBatches,
   formatEventTime,
   escapeHtml,
   getReleaseDedupeId,
@@ -140,12 +140,12 @@ const sendLongTelegramMessage = async (text, targetChatId) => {
   for (const line of lines) {
     if (line.length > TELEGRAM_MESSAGE_CHUNK_SIZE) {
       if (chunk) {
-        await sendTelegramMessage(chunk, targetChatId);
+        if (!await sendTelegramMessage(chunk, targetChatId)) return false;
         chunk = '';
       }
 
       for (let i = 0; i < line.length; i += TELEGRAM_MESSAGE_CHUNK_SIZE) {
-        await sendTelegramMessage(line.slice(i, i + TELEGRAM_MESSAGE_CHUNK_SIZE), targetChatId);
+        if (!await sendTelegramMessage(line.slice(i, i + TELEGRAM_MESSAGE_CHUNK_SIZE), targetChatId)) return false;
       }
       continue;
     }
@@ -157,11 +157,12 @@ const sendLongTelegramMessage = async (text, targetChatId) => {
       continue;
     }
 
-    if (chunk) await sendTelegramMessage(chunk, targetChatId);
+    if (chunk && !await sendTelegramMessage(chunk, targetChatId)) return false;
     chunk = line;
   }
 
-  if (chunk) await sendTelegramMessage(chunk, targetChatId);
+  if (chunk && !await sendTelegramMessage(chunk, targetChatId)) return false;
+  return true;
 };
 
 const buildEventsReport = (events, displayTitle, heading, totalEventCount = events.length) => {
@@ -436,6 +437,10 @@ const fetchFreshResultEvents = async (dateQueries, groupEvents) => {
   return {
     events: resultEvents,
     pendingEvents: resultEvents.filter(shouldWaitForActualValue),
+    contextEvents: [
+      ...resultEvents,
+      ...freshEvents.filter((ev) => !resultEvents.some((result) => isSameEvent(ev, result))),
+    ],
   };
 };
 
@@ -451,15 +456,18 @@ const buildScrapeFailureMessage = (displayTitle, failure) => (
   'Please try again after the source is available.'
 );
 
-const sendReleaseGroupMessage = async (releaseEvents) => {
-  if (releaseEvents.length === 0) return false;
+const sendReleaseGroupMessage = async (releaseEvents, contextEvents) => {
+  if (releaseEvents.length === 0) return [];
 
-  let resultMsg = `✅ <b>News Released (${escapeHtml(formatEventTime(releaseEvents[0]))}):</b>\n`;
-  for (const ev of releaseEvents) {
-    resultMsg += formatEventMessage(ev);
+  const batches = buildEventAlertBatches(releaseEvents, {
+    heading: `✅ <b>News Released (${escapeHtml(formatEventTime(releaseEvents[0]))}):</b>\n`,
+    contextEvents,
+  });
+  const deliveredEvents = [];
+  for (const batch of batches) {
+    if (await sendLongTelegramMessage(batch.text)) deliveredEvents.push(...batch.events);
   }
-
-  return sendTelegramMessage(resultMsg);
+  return deliveredEvents;
 };
 
 const scheduleDailySummary = () => {
@@ -575,9 +583,11 @@ const loadAndSchedule = async () => {
       const warningJobName = `warning-${timeKey}`;
       activeJobNames.add(warningJobName);
       scheduleOrReplaceManagedJob(warningJobName, warningTime.toDate(), async () => {
-        let msg = `⚠️ <b>${WARNING_MINUTES} Minutes to Release (${escapeHtml(formatEventTime(groupEvents[0]))}):</b>\n`;
-        groupEvents.forEach(ev => msg += formatEventMessage(ev) + '\n');
-        await sendTelegramMessage(msg);
+        const batches = buildEventAlertBatches(groupEvents, {
+          heading: `⚠️ <b>${WARNING_MINUTES} Minutes to Release (${escapeHtml(formatEventTime(groupEvents[0]))}):</b>\n`,
+          phase: 'pre-release',
+        });
+        for (const batch of batches) await sendLongTelegramMessage(batch.text);
       });
     }
 
@@ -606,6 +616,7 @@ const loadAndSchedule = async () => {
             const {
               events: resultEvents,
               pendingEvents: nextPendingEvents,
+              contextEvents,
             } = await fetchFreshResultEvents(dateQueries, groupEvents);
 
             const releaseEvents = getReleaseUpdateEvents(resultEvents, nextPendingEvents);
@@ -613,16 +624,16 @@ const loadAndSchedule = async () => {
             const deliveredReleaseEvents = [];
 
             if (unsentReleaseEvents.length > 0) {
-              const sent = await sendReleaseGroupMessage(unsentReleaseEvents);
-              if (sent) {
-                unsentReleaseEvents.forEach((targetEv) => markSent(getReleaseDedupeId(targetEv)));
-                sentCount += unsentReleaseEvents.length;
-                deliveredReleaseEvents.push(...unsentReleaseEvents);
-              }
+              const delivered = await sendReleaseGroupMessage(unsentReleaseEvents, contextEvents);
+              delivered.forEach((targetEv) => markSent(getReleaseDedupeId(targetEv)));
+              sentCount += delivered.length;
+              deliveredReleaseEvents.push(...delivered);
             }
 
             pendingEvents = nextPendingEvents;
-            const nextRetryAt = pendingEvents.length > 0 && attempt < RESULT_RETRY_ATTEMPTS ?
+            const undeliveredCount = unsentReleaseEvents.length - deliveredReleaseEvents.length;
+            const needsRetry = pendingEvents.length > 0 || undeliveredCount > 0;
+            const nextRetryAt = needsRetry && attempt < RESULT_RETRY_ATTEMPTS ?
               new Date(Date.now() + RESULT_RETRY_DELAY_SECONDS * 1000).toISOString() :
               null;
 
@@ -636,20 +647,23 @@ const loadAndSchedule = async () => {
               nextRetryAt,
             });
 
-            if (pendingEvents.length === 0) {
+            if (!needsRetry) {
               clearPendingResults(jobName);
               return;
             }
 
             if (attempt === RESULT_RETRY_ATTEMPTS) {
-              console.warn(
-                `Actual value still pending after ${attempt + 1} scrape cycle(s) across ${dateQueries.join(', ')}: ` +
-                pendingEvents.map((ev) => `${ev.currency} ${ev.eventName}`).join(', ')
-              );
-              if (sentCount === 0) {
+              if (undeliveredCount > 0) console.warn(`${undeliveredCount} release alert(s) could not be delivered after retries.`);
+              if (pendingEvents.length > 0) {
                 console.warn(
-                  `No release rows with actual values after ${attempt + 1} scrape cycle(s) across ${dateQueries.join(', ')}`
+                  `Actual value still pending after ${attempt + 1} scrape cycle(s) across ${dateQueries.join(', ')}: ` +
+                  pendingEvents.map((ev) => `${ev.currency} ${ev.eventName}`).join(', ')
                 );
+                if (sentCount === 0 && releaseEvents.length === 0) {
+                  console.warn(
+                    `No release rows with actual values after ${attempt + 1} scrape cycle(s) across ${dateQueries.join(', ')}`
+                  );
+                }
               }
               return;
             }

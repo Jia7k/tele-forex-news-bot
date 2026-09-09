@@ -19,6 +19,7 @@ A Node.js Telegram bot that monitors the Forex Factory economic calendar and sen
 - Includes tentative events in summaries and `/check` reports.
 - Supports alert filters by currency and impact.
 - Detects actual-vs-forecast surprises where numeric values are available.
+- Adds a data-based XAUUSD outlook below every event in warning and result alerts, including indirect and low-impact events.
 - Provides `/status`, `/health`, and JSON runtime diagnostics.
 - Supports Telegram polling, webhook mode, and disabled mode for local smoke tests.
 - Persists sent release IDs to avoid duplicate result alerts across restarts.
@@ -95,6 +96,33 @@ See [.env.example](.env.example) for a complete template.
 ```
 
 `/check` sends the current day report. `/status` shows runtime diagnostics such as last scrape, scheduled jobs, filters, pending groups, and Telegram mode. `/pending` lists release groups still waiting for actual values.
+
+## Gold Outlook
+
+Every event in pre-release warnings and result alerts ends with a compact **Gold** line for XAUUSD, including non-US events, low-impact releases, and statements. Daily summaries stay unchanged.
+
+- US inflation, employment, activity, and Fed rate surprises get a data-based **LONG** or **SHORT** bias, with no explanatory paragraph in the alert.
+- Unemployment and jobless claims use the opposite direction to employment growth. Only valid, comparable actual/forecast numbers are used; previous values are never treated as consensus.
+- Non-US events, ambiguous indicators, in-line results, and conflicting same-time US releases get **NEUTRAL**, not a forced trade recommendation.
+- Pre-release warnings for supported numeric indicators and missing or incomplete comparable release data show **WAIT**. Events without a supported directional rule remain **NEUTRAL**.
+- Outlooks use all available same-time data, including rows filtered out of alerts or already delivered. Large groups are split at event boundaries so normal alerts retain their data and footer together.
+
+Example layout using illustrative CPI values:
+
+```text
+USD - CPI m/m
+├ Act: 0.4%
+├ Fcst: 0.3%
+├ Prev: 0.2%
+├ Surprise: Higher than forecast (+0.1%)
+└ Gold : SHORT
+```
+
+The French Trade Balance example (`-6.7B` actual versus `-6.0B` forecast) ends with `Gold : NEUTRAL` because its relevance is indirect.
+
+These are transparent economic heuristics, not backtested predictions or measured probabilities. **LONG/SHORT is a data bias, not a confirmed trade entry.** The bot does not fetch live gold, dollar or yield prices, analyze speeches, or account for historical revisions in its bias. Live market confirmation must be checked separately. A missing actual value remains missing; the outlook does not resolve an unavailable data source.
+
+The rate/USD-channel scenarios are an implementation inference informed by the [Federal Reserve's employment and price-stability objectives](https://www.federalreserve.gov/faqs/what-economic-goals-does-federal-reserve-seek-to-achieve-through-monetary-policy.htm). They are not a rule that higher inflation always means lower gold: [World Gold Council research](https://www.gold.org/goldhub/research/beyond-cpi-gold-as-a-strategic-inflation-hedge) highlights the weak, context-dependent relationship between CPI and gold returns.
 
 ## Optional Fallback Provider
 
